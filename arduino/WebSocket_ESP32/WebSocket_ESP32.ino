@@ -24,10 +24,9 @@
 // WIFI
 // =====================================================
 
-//const char *ssid = "CLARO_2.4GHz_4E8E03";
-//const char *password = "ptn9ZRhmf+EEcpX";
-const char *ssid = "DESKTOP-8T2K0LU 2080";
-const char *password = "14i^804X";
+//const char *ssid = "tuid";
+//const char *password = "tupass";
+
 
 // =====================================================
 // IDENTIDAD DEL DISPOSITIVO
