@@ -1,0 +1,14 @@
+{
+    "name": "mario/iot-websocket",
+    "description": "WebSocket server for ESP32 IoT Control Platform V2",
+    "require": {
+        "cboden/ratchet": "^0.4.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "IoTWebSocket\\": "src/"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -1,0 +1,414 @@
+<script setup lang="ts">
+
+import { computed, onMounted, ref } from 'vue'
+import { getHealth } from './services/api'
+
+
+type DeviceStatus = 'online' | 'offline'
+
+interface Device {
+  id: number
+  name: string
+  type: string
+  location: string
+  status: DeviceStatus
+  leds: {
+    led1: boolean
+    led2: boolean
+  }
+}
+
+const activeSection = ref('dashboard')
+const apiOnline = ref(false)
+const apiVersion = ref('')
+
+const devices = ref<Device[]>([
+  {
+    id: 1,
+    name: 'ESP32 Principal',
+    type: 'ESP32',
+    location: 'Sala principal',
+    status: 'online',
+    leds: {
+      led1: false,
+      led2: true,
+    },
+  },
+  {
+    id: 2,
+    name: 'ESP32 Laboratorio',
+    type: 'ESP32',
+    location: 'Laboratorio',
+    status: 'offline',
+    leds: {
+      led1: false,
+      led2: false,
+    },
+  },
+])
+
+const onlineDevices = computed(
+  () => devices.value.filter((device) => device.status === 'online').length,
+)
+
+const offlineDevices = computed(
+  () => devices.value.filter((device) => device.status === 'offline').length,
+)
+
+const totalSensors = ref(0) 
+//const totalUsers = ref(0)la comentariamos porque no se usa aun
+
+async function checkApi() {
+  try {
+    const health = await getHealth()
+
+    apiOnline.value = health.status === 'ok'
+    apiVersion.value = health.version
+  } catch (error) {
+    apiOnline.value = false
+    console.error('No se pudo conectar con Laravel:', error)
+  }
+}
+
+onMounted(() => {
+  checkApi()
+})
+
+function toggleLed(device: Device, led: 'led1' | 'led2') {
+  if (device.status !== 'online') return
+
+  device.leds[led] = !device.leds[led]
+
+  // Aquí conectaremos posteriormente el WebSocket.
+  console.log({
+    command: `${led}_${device.leds[led] ? 'on' : 'off'}`,
+    device: device.id,
+  })
+}
+
+function selectSection(section: string) {
+  activeSection.value = section
+}
+</script>
+
+<template>
+  <div class="app-shell">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">
+          <span>⚡</span>
+        </div>
+
+        <div>
+          <strong>IoT Control</strong>
+          <small>Platform V2</small>
+        </div>
+      </div>
+
+      <nav class="navigation">
+        <p class="nav-label">PLATAFORMA</p>
+
+        <button
+          class="nav-item"
+          :class="{ active: activeSection === 'dashboard' }"
+          @click="selectSection('dashboard')"
+        >
+          <span class="nav-icon">▦</span>
+          Dashboard
+        </button>
+
+        <button
+          class="nav-item"
+          :class="{ active: activeSection === 'devices' }"
+          @click="selectSection('devices')"
+        >
+          <span class="nav-icon">▣</span>
+          Dispositivos
+        </button>
+
+        <button
+          class="nav-item"
+          :class="{ active: activeSection === 'sensors' }"
+          @click="selectSection('sensors')"
+        >
+          <span class="nav-icon">◉</span>
+          Sensores
+        </button>
+
+        <p class="nav-label nav-label-spaced">ADMINISTRACIÓN</p>
+
+        <button
+          class="nav-item"
+          :class="{ active: activeSection === 'users' }"
+          @click="selectSection('users')"
+        >
+          <span class="nav-icon">♙</span>
+          Usuarios
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-status">
+          <span class="status-dot online"></span>
+          <div>
+            <strong>Sistema</strong>
+            <small>Operativo</small>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="breadcrumb">IoT Control Platform</p>
+          <h1>
+            {{
+              activeSection === 'dashboard'
+                ? 'Dashboard'
+                : activeSection === 'devices'
+                  ? 'Dispositivos'
+                  : activeSection === 'sensors'
+                    ? 'Sensores'
+                    : 'Usuarios'
+            }}
+          </h1>
+        </div>
+
+        <div class="topbar-actions">
+          <div class="api-status">
+            <span
+              class="status-dot"
+              :class="{ online: apiOnline }"
+            ></span>
+
+            {{ apiOnline ? `API online · v${apiVersion}` : 'API offline' }}
+          </div>
+
+          <div class="user-menu">
+            <div class="avatar">M</div>
+            <div class="user-info">
+              <strong>Administrador</strong>
+              <small>Admin</small>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- DASHBOARD -->
+      <section v-if="activeSection === 'dashboard'" class="content">
+        <div class="welcome">
+          <div>
+            <p class="eyebrow">CENTRO DE CONTROL</p>
+            <h2>Resumen de tu infraestructura IoT</h2>
+            <p class="description">
+              Supervisa tus dispositivos y controla tus actuadores en tiempo real.
+            </p>
+          </div>
+
+          <div class="live-badge">
+            <span class="status-dot online"></span>
+            Tiempo real
+          </div>
+        </div>
+
+        <!-- STATS -->
+        <div class="stats-grid">
+          <article class="stat-card">
+            <div class="stat-icon blue">▣</div>
+            <div>
+              <span class="stat-label">Dispositivos</span>
+              <strong>{{ devices.length }}</strong>
+              <small>Total registrados</small>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon green">✓</div>
+            <div>
+              <span class="stat-label">En línea</span>
+              <strong>{{ onlineDevices }}</strong>
+              <small>Dispositivos activos</small>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon orange">!</div>
+            <div>
+              <span class="stat-label">Fuera de línea</span>
+              <strong>{{ offlineDevices }}</strong>
+              <small>Requieren atención</small>
+            </div>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-icon purple">◉</div>
+            <div>
+              <span class="stat-label">Sensores</span>
+              <strong>{{ totalSensors }}</strong>
+              <small>Sensores registrados</small>
+            </div>
+          </article>
+        </div>
+
+        <!-- DEVICES -->
+        <div class="section-header">
+          <div>
+            <h3>Dispositivos</h3>
+            <p>Estado y control de tus dispositivos IoT</p>
+          </div>
+
+          <button class="secondary-button" @click="selectSection('devices')">
+            Ver todos
+          </button>
+        </div>
+
+        <div class="devices-grid">
+          <article
+            v-for="device in devices"
+            :key="device.id"
+            class="device-card"
+          >
+            <div class="device-header">
+              <div class="device-title">
+                <div class="device-icon">ESP</div>
+
+                <div>
+                  <h4>{{ device.name }}</h4>
+                  <p>{{ device.type }} · {{ device.location }}</p>
+                </div>
+              </div>
+
+              <span
+                class="device-status"
+                :class="device.status"
+              >
+                <span class="status-dot"></span>
+                {{ device.status === 'online' ? 'Online' : 'Offline' }}
+              </span>
+            </div>
+
+            <div class="device-divider"></div>
+
+            <div class="led-controls">
+              <div class="led-control">
+                <div>
+                  <span class="led-name">LED 1</span>
+                  <small>GPIO 18</small>
+                </div>
+
+                <button
+                  class="led-switch"
+                  :class="{ on: device.leds.led1 }"
+                  :disabled="device.status !== 'online'"
+                  @click="toggleLed(device, 'led1')"
+                >
+                  <span></span>
+                  {{ device.leds.led1 ? 'ON' : 'OFF' }}
+                </button>
+              </div>
+
+              <div class="led-control">
+                <div>
+                  <span class="led-name">LED 2</span>
+                  <small>GPIO 19</small>
+                </div>
+
+                <button
+                  class="led-switch"
+                  :class="{ on: device.leds.led2 }"
+                  :disabled="device.status !== 'online'"
+                  @click="toggleLed(device, 'led2')"
+                >
+                  <span></span>
+                  {{ device.leds.led2 ? 'ON' : 'OFF' }}
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- ACTIVITY -->
+        <div class="section-header activity-header">
+          <div>
+            <h3>Actividad reciente</h3>
+            <p>Eventos de la plataforma</p>
+          </div>
+        </div>
+
+        <div class="activity-card">
+          <div class="activity-item">
+            <div class="activity-icon green">✓</div>
+            <div>
+              <strong>ESP32 Principal conectado</strong>
+              <small>Conexión WebSocket establecida</small>
+            </div>
+            <time>Ahora</time>
+          </div>
+
+          <div class="activity-item">
+            <div class="activity-icon blue">●</div>
+            <div>
+              <strong>LED 2 encendido</strong>
+              <small>ESP32 Principal · GPIO 19</small>
+            </div>
+            <time>Ahora</time>
+          </div>
+        </div>
+      </section>
+
+      <!-- DEVICES -->
+      <section v-else-if="activeSection === 'devices'" class="content">
+        <div class="page-intro">
+          <p class="eyebrow">GESTIÓN</p>
+          <h2>Dispositivos</h2>
+          <p>Administra los dispositivos ESP32 registrados en la plataforma.</p>
+        </div>
+
+        <div class="empty-module">
+          <div class="empty-icon">▣</div>
+          <h3>Gestión de dispositivos</h3>
+          <p>
+            Aquí conectaremos el CRUD de dispositivos con Laravel.
+          </p>
+        </div>
+      </section>
+
+      <!-- SENSORS -->
+      <section v-else-if="activeSection === 'sensors'" class="content">
+        <div class="page-intro">
+          <p class="eyebrow">GESTIÓN</p>
+          <h2>Sensores</h2>
+          <p>Administra los sensores asociados a tus dispositivos.</p>
+        </div>
+
+        <div class="empty-module">
+          <div class="empty-icon">◉</div>
+          <h3>Gestión de sensores</h3>
+          <p>
+            Aquí conectaremos el CRUD de sensores con Laravel.
+          </p>
+        </div>
+      </section>
+
+      <!-- USERS -->
+      <section v-else class="content">
+        <div class="page-intro">
+          <p class="eyebrow">ADMINISTRACIÓN</p>
+          <h2>Usuarios</h2>
+          <p>Administra los usuarios y permisos de la plataforma.</p>
+        </div>
+
+        <div class="empty-module">
+          <div class="empty-icon">♙</div>
+          <h3>Gestión de usuarios</h3>
+          <p>
+            Aquí conectaremos el CRUD de usuarios con Laravel.
+          </p>
+        </div>
+      </section>
+    </main>
+  </div>
+</template>
