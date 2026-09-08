@@ -24,8 +24,8 @@
 // WIFI
 // =====================================================
 
-const char *ssid = "tu_ssid";
-const char *password = "password";
+const char *ssid = "CLARO_2.4GHz_4E8E03";
+const char *password = "ptn9ZRhmf+EEcpX";
 
 
 // =====================================================
