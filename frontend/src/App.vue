@@ -72,15 +72,145 @@ const ws = ref<WebSocket | null>(null)
 const devices = ref<Device[]>([])
 const totalSensors = ref(0)
 
+/* =====================================================
+   LED PENDING / CONFIRMATION
+===================================================== */
+
+/*
+ * Guarda temporalmente los LEDs que tienen un comando
+ * enviado pero todavía no confirmado por el servidor.
+ *
+ * key:
+ *   deviceId-ledId
+ *
+ * value:
+ *   estado que estamos esperando recibir.
+ */
+
+const pendingLedCommands = ref<
+  Record<string, boolean>
+>({})
+
+const pendingTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>()
+
+function getLedKey(
+  deviceId: number,
+  ledId: number
+) {
+  return `${deviceId}-${ledId}`
+}
+
+/*function isLedChanging(
+  deviceId: number,
+  ledId: number
+) {
+  return Boolean(
+    pendingLedCommands.value[
+      getLedKey(deviceId, ledId)
+    ]
+  )
+}*/
+function isLedChanging(
+  deviceId: number,
+  ledId: number
+) {
+  const key = getLedKey(
+    deviceId,
+    ledId
+  )
+
+  return (
+    Object.prototype.hasOwnProperty.call(
+      pendingLedCommands.value,
+      key
+    )
+  )
+}
+
+
+function clearLedPending(
+  deviceId: number,
+  ledId: number
+) {
+  const key = getLedKey(
+    deviceId,
+    ledId
+  )
+
+  const next = {
+    ...pendingLedCommands.value,
+  }
+
+  delete next[key]
+
+  pendingLedCommands.value = next
+
+  const timer =
+    pendingTimers.get(key)
+
+  if (timer) {
+    clearTimeout(timer)
+    pendingTimers.delete(key)
+  }
+}
+
+function setLedPending(
+  device: Device,
+  led: Led,
+  expectedState: boolean
+) {
+  const key = getLedKey(
+    device.id,
+    led.id
+  )
+
+  pendingLedCommands.value = {
+    ...pendingLedCommands.value,
+    [key]: expectedState,
+  }
+
+  /*
+   * Timeout de seguridad.
+   *
+   * Si el servidor no confirma el cambio,
+   * dejamos de mostrar CAMBIANDO... después
+   * de unos segundos.
+   */
+  const existingTimer =
+    pendingTimers.get(key)
+
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+  }
+
+  const timer = setTimeout(() => {
+    clearLedPending(
+      device.id,
+      led.id
+    )
+  }, 8000)
+
+  pendingTimers.set(key, timer)
+}
+
+/* =====================================================
+   COMPUTED
+===================================================== */
+
 const onlineDevices = computed(() =>
   devices.value.filter(
-    device => device.status === 'online'
+    device =>
+      device.status === 'online'
   ).length
 )
 
 const offlineDevices = computed(() =>
   devices.value.filter(
-    device => device.status === 'offline'
+    device =>
+      device.status === 'offline'
   ).length
 )
 
@@ -141,9 +271,10 @@ const defaultDashboardPreferences: DashboardPreferences = {
 
 function loadDashboardPreferences(): DashboardPreferences {
   try {
-    const saved = localStorage.getItem(
-      'iot-dashboard-preferences'
-    )
+    const saved =
+      localStorage.getItem(
+        'iot-dashboard-preferences'
+      )
 
     if (!saved) {
       return {
@@ -151,7 +282,8 @@ function loadDashboardPreferences(): DashboardPreferences {
       }
     }
 
-    const parsed = JSON.parse(saved)
+    const parsed =
+      JSON.parse(saved)
 
     return {
       ...defaultDashboardPreferences,
@@ -174,7 +306,8 @@ const dashboardPreferences =
     loadDashboardPreferences()
   )
 
-const customizerOpen = ref(false)
+const customizerOpen =
+  ref(false)
 
 function saveDashboardPreferences() {
   localStorage.setItem(
@@ -188,8 +321,12 @@ function saveDashboardPreferences() {
 function toggleDashboardPanel(
   panel: DashboardPanel
 ) {
-  dashboardPreferences.value[panel] =
-    !dashboardPreferences.value[panel]
+  dashboardPreferences.value[
+    panel
+  ] =
+    !dashboardPreferences.value[
+      panel
+    ]
 
   saveDashboardPreferences()
 }
@@ -211,7 +348,10 @@ function closeCustomizer() {
 ===================================================== */
 
 const pageTitle = computed(() => {
-  const titles: Record<string, string> = {
+  const titles: Record<
+    string,
+    string
+  > = {
     dashboard: 'Dashboard',
     devices: 'Dispositivos',
     sensors: 'Sensores',
@@ -238,7 +378,8 @@ function applyTheme() {
 }
 
 function toggleTheme() {
-  isDark.value = !isDark.value
+  isDark.value =
+    !isDark.value
 
   localStorage.setItem(
     'iot-theme',
@@ -254,9 +395,14 @@ function toggleTheme() {
    NAVIGATION FUNCTIONS
 ===================================================== */
 
-function selectSection(section: string) {
-  activeSection.value = section
-  mobileMenuOpen.value = false
+function selectSection(
+  section: string
+) {
+  activeSection.value =
+    section
+
+  mobileMenuOpen.value =
+    false
 }
 
 function toggleMobileMenu() {
@@ -270,7 +416,8 @@ function toggleMobileMenu() {
 
 async function checkApi() {
   try {
-    const health = await getHealth()
+    const health =
+      await getHealth()
 
     apiOnline.value =
       health.status === 'ok'
@@ -299,7 +446,8 @@ function mapWebSocketLed(
     id: Number(wsLed.id),
     name: wsLed.name,
     gpio: Number(wsLed.gpio),
-    state: wsLed.state === 'ON',
+    state:
+      wsLed.state === 'ON',
   }
 }
 
@@ -307,7 +455,9 @@ function mapWebSocketDevice(
   wsDevice: WebSocketDevice
 ): Device {
   const leds =
-    Array.isArray(wsDevice.leds)
+    Array.isArray(
+      wsDevice.leds
+    )
       ? wsDevice.leds.map(
           mapWebSocketLed
         )
@@ -317,9 +467,11 @@ function mapWebSocketDevice(
     id: Number(wsDevice.id),
     name: wsDevice.name,
     type: 'ESP32',
-    location: 'Sin ubicación',
+    location:
+      'Sin ubicación',
     registered:
-      wsDevice.registered ?? true,
+      wsDevice.registered ??
+      true,
     status:
       wsDevice.online === false
         ? 'offline'
@@ -328,13 +480,108 @@ function mapWebSocketDevice(
   }
 }
 
+/* =====================================================
+   CONFIRM LED COMMANDS
+===================================================== */
+
+function processLedConfirmations(
+  serverDevices: WebSocketDevice[]
+) {
+  for (
+    const serverDevice of serverDevices
+  ) {
+    if (
+      !Array.isArray(
+        serverDevice.leds
+      )
+    ) {
+      continue
+    }
+
+    for (
+      const serverLed of
+        serverDevice.leds
+    ) {
+      const key =
+        getLedKey(
+          Number(
+            serverDevice.id
+          ),
+          Number(serverLed.id)
+        )
+
+      const pending =
+        pendingLedCommands.value[
+          key
+        ]
+
+      if (
+        pending === undefined
+      ) {
+        continue
+      }
+
+      const confirmedState =
+        serverLed.state === 'ON'
+
+      /*
+       * El servidor devolvió exactamente
+       * el estado que esperábamos.
+       */
+      if (
+        confirmedState ===
+        pending
+      ) {
+        clearLedPending(
+          Number(
+            serverDevice.id
+          ),
+          Number(serverLed.id)
+        )
+      }
+    }
+  }
+}
+
 function updateDevicesFromServer(
   serverDevices: WebSocketDevice[]
 ) {
+  processLedConfirmations(
+    serverDevices
+  )
+
   devices.value =
     serverDevices.map(
       mapWebSocketDevice
     )
+
+  /*
+   * Si un dispositivo está offline,
+   * todos sus comandos pendientes se
+   * cancelan porque ya no podemos esperar
+   * una confirmación válida.
+   */
+  for (
+    const device of
+      devices.value
+  ) {
+    if (
+      device.status !==
+      'offline'
+    ) {
+      continue
+    }
+
+    for (
+      const led of
+        device.leds
+    ) {
+      clearLedPending(
+        device.id,
+        led.id
+      )
+    }
+  }
 }
 
 /* =====================================================
@@ -355,16 +602,20 @@ function connectWebSocket() {
     return
   }
 
-  console.log('[WS] Conectando...')
-
-  const socket = new WebSocket(
-    'ws://127.0.0.1:8080'
+  console.log(
+    '[WS] Conectando...'
   )
+
+  const socket =
+    new WebSocket(
+      'ws://127.0.0.1:8080'
+    )
 
   ws.value = socket
 
   socket.onopen = () => {
-    wsConnected.value = true
+    wsConnected.value =
+      true
 
     console.log(
       '[WS] Conectado correctamente'
@@ -373,11 +624,15 @@ function connectWebSocket() {
 
   socket.onmessage = event => {
     try {
-      const data = JSON.parse(
-        event.data
-      )
+      const data =
+        JSON.parse(
+          event.data
+        )
 
-      if (data.type === 'status') {
+      if (
+        data.type ===
+        'status'
+      ) {
         const statusMessage =
           data as WebSocketStatusMessage
 
@@ -407,7 +662,8 @@ function connectWebSocket() {
       }
 
       if (
-        data.type === 'command'
+        data.type ===
+        'command'
       ) {
         console.log(
           '[WS] Comando recibido:',
@@ -423,7 +679,8 @@ function connectWebSocket() {
   }
 
   socket.onerror = error => {
-    wsConnected.value = false
+    wsConnected.value =
+      false
 
     console.error(
       '[WS] Error:',
@@ -432,7 +689,8 @@ function connectWebSocket() {
   }
 
   socket.onclose = () => {
-    wsConnected.value = false
+    wsConnected.value =
+      false
 
     console.log(
       '[WS] Conexión cerrada'
@@ -442,19 +700,39 @@ function connectWebSocket() {
 
 /* =====================================================
    LED CONTROL
-   NOT MODIFIED
 ===================================================== */
 
 function toggleLed(
   device: Device,
   led: Led
 ) {
+  /*
+   * Dispositivo offline:
+   * no permitimos enviar comandos.
+   */
   if (
-    device.status !== 'online'
+    device.status !==
+    'online'
   ) {
     return
   }
 
+  /*
+   * Evita enviar otro comando
+   * mientras esperamos confirmación.
+   */
+  if (
+    isLedChanging(
+      device.id,
+      led.id
+    )
+  ) {
+    return
+  }
+
+  /*
+   * WebSocket desconectado.
+   */
   if (
     !ws.value ||
     ws.value.readyState !==
@@ -467,17 +745,100 @@ function toggleLed(
     return
   }
 
+  /*
+   * Calculamos el estado que esperamos
+   * recibir después del toggle.
+   */
+  const expectedState =
+    !led.state
+
   const message = {
-    command: 'led_toggle',
-    device_id: device.id,
-    led_id: led.id,
+    command:
+      'led_toggle',
+    device_id:
+      device.id,
+    led_id:
+      led.id,
   }
 
-  ws.value.send(
-    JSON.stringify(message)
+  /*
+   * Marcamos CAMBIANDO...
+   * antes de enviar.
+   */
+  setLedPending(
+    device,
+    led,
+    expectedState
+  )
+
+  try {
+    ws.value.send(
+      JSON.stringify(message)
+    )
+  } catch (error) {
+    console.error(
+      '[WS] Error enviando comando:',
+      error
+    )
+
+    clearLedPending(
+      device.id,
+      led.id
+    )
+  }
+}
+
+/* =====================================================
+   HELPERS
+===================================================== */
+
+function deviceIsOffline(
+  device: Device
+) {
+  return (
+    device.status ===
+    'offline'
   )
 }
 
+/*function ledButtonLabel(
+  device: Device,
+  led: Led
+) {
+  if (
+    deviceIsOffline(device)
+  ) {
+    return 'BLOQUEADO'
+  }
+
+  if (
+    isLedChanging(
+      device.id,
+      led.id
+    )
+  ) {
+    return 'CAMBIANDO...'
+  }
+
+  return led.state
+    ? 'ON'
+    : 'OFF'
+}
+*/
+function ledButtonLabel(
+  device: Device,
+  led: Led
+) {
+  if (
+    deviceIsOffline(device)
+  ) {
+    return 'BLOQUEADO'
+  }
+
+  return led.state
+    ? 'ON'
+    : 'OFF'
+}
 /* =====================================================
    LIFECYCLE
 ===================================================== */
@@ -493,30 +854,38 @@ onUnmounted(() => {
     ws.value.close()
     ws.value = null
   }
+
+  for (
+    const timer of
+      pendingTimers.values()
+  ) {
+    clearTimeout(timer)
+  }
+
+  pendingTimers.clear()
 })
 </script>
 
 <template>
   <div class="app-shell">
 
-    <!-- =================================================
-         MOBILE OVERLAY
-    ================================================== -->
+    <!-- MOBILE OVERLAY -->
 
     <div
       v-if="mobileMenuOpen"
       class="mobile-overlay"
-      @click="mobileMenuOpen = false"
+      @click="
+        mobileMenuOpen = false
+      "
     ></div>
 
-    <!-- =================================================
-         SIDEBAR
-    ================================================== -->
+    <!-- SIDEBAR -->
 
     <aside
       class="sidebar"
       :class="{
-        'sidebar-open': mobileMenuOpen
+        'sidebar-open':
+          mobileMenuOpen
       }"
     >
       <div class="brand">
@@ -566,7 +935,9 @@ onUnmounted(() => {
                 )
               "
             >
-              <span class="nav-item-icon">
+              <span
+                class="nav-item-icon"
+              >
                 ⌂
               </span>
 
@@ -588,7 +959,9 @@ onUnmounted(() => {
                 )
               "
             >
-              <span class="nav-item-icon">
+              <span
+                class="nav-item-icon"
+              >
                 ▣
               </span>
 
@@ -617,7 +990,9 @@ onUnmounted(() => {
                 )
               "
             >
-              <span class="nav-item-icon">
+              <span
+                class="nav-item-icon"
+              >
                 ◉
               </span>
 
@@ -645,7 +1020,9 @@ onUnmounted(() => {
                 )
               "
             >
-              <span class="nav-item-icon">
+              <span
+                class="nav-item-icon"
+              >
                 ♙
               </span>
 
@@ -660,11 +1037,18 @@ onUnmounted(() => {
 
       <div class="sidebar-bottom">
 
-        <div class="connection-box">
+        <div
+          class="connection-box"
+          :class="{
+            offline:
+              !wsConnected
+          }"
+        >
           <span
             class="connection-dot"
             :class="{
-              connected: wsConnected
+              connected:
+                wsConnected
             }"
           ></span>
 
@@ -690,15 +1074,11 @@ onUnmounted(() => {
       </div>
     </aside>
 
-    <!-- =================================================
-         MAIN
-    ================================================== -->
+    <!-- MAIN -->
 
     <main class="main-content">
 
-      <!-- =================================================
-           TOPBAR
-      ================================================== -->
+      <!-- TOPBAR -->
 
       <header class="topbar">
 
@@ -720,8 +1100,10 @@ onUnmounted(() => {
           </button>
 
           <div>
-            <span class="topbar-breadcrumb">
-              IoT CONTROL PLATFORM
+            <span
+              class="topbar-breadcrumb"
+            >
+              IOT CONTROL PLATFORM
             </span>
 
             <h1>
@@ -732,8 +1114,6 @@ onUnmounted(() => {
         </div>
 
         <div class="topbar-actions">
-
-          <!-- THEME -->
 
           <button
             class="theme-toggle"
@@ -755,8 +1135,6 @@ onUnmounted(() => {
             </span>
           </button>
 
-          <!-- API -->
-
           <div
             class="api-pill"
             :class="{
@@ -775,8 +1153,6 @@ onUnmounted(() => {
               }}
             </span>
           </div>
-
-          <!-- USER -->
 
           <div class="user-profile">
 
@@ -799,15 +1175,11 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <!-- =================================================
-           SCROLL AREA
-      ================================================== -->
+      <!-- SCROLL AREA -->
 
       <div class="content-scroll">
 
-        <!-- =================================================
-             DASHBOARD
-        ================================================== -->
+        <!-- DASHBOARD -->
 
         <section
           v-if="
@@ -817,9 +1189,7 @@ onUnmounted(() => {
           class="page-content dashboard-page"
         >
 
-          <!-- =================================================
-               HERO
-          ================================================== -->
+          <!-- HERO -->
 
           <section
             class="dashboard-hero"
@@ -847,11 +1217,16 @@ onUnmounted(() => {
 
             <div
               class="live-indicator"
+              :class="{
+                offline:
+                  !wsConnected
+              }"
             >
               <span
                 class="live-dot"
                 :class="{
-                  active: wsConnected
+                  active:
+                    wsConnected
                 }"
               ></span>
 
@@ -863,41 +1238,41 @@ onUnmounted(() => {
             </div>
           </section>
 
-         <!-- =================================================
-              DASHBOARD TOOLBAR
-          ================================================== -->
+          <!-- TOOLBAR -->
 
-          <div class="dashboard-toolbar">
-
-            <div class="dashboard-toolbar-content">
-
-              <span class="dashboard-toolbar-title">
+          <div
+            class="dashboard-toolbar"
+          >
+            <div
+              class="dashboard-toolbar-content"
+            >
+              <span
+                class="dashboard-toolbar-title"
+              >
                 Panel de control
               </span>
 
-              <span class="dashboard-toolbar-description">
+              <span
+                class="dashboard-toolbar-description"
+              >
                 Personaliza la información
                 que quieres visualizar.
               </span>
-
             </div>
 
             <button
               class="customize-button"
               type="button"
-              @click="customizerOpen = true"
-              aria-label="Personalizar dashboard"
+              @click="
+                customizerOpen = true
+              "
             >
               <span>⚙</span>
               Personalizar
             </button>
-
           </div>
 
-
-          <!-- =================================================
-               CUSTOMIZER
-          ================================================== -->
+          <!-- CUSTOMIZER -->
 
           <div
             v-if="customizerOpen"
@@ -917,7 +1292,6 @@ onUnmounted(() => {
                 class="customizer-header"
               >
                 <div>
-
                   <span
                     class="section-kicker"
                   >
@@ -934,7 +1308,6 @@ onUnmounted(() => {
                     Selecciona los paneles
                     que quieres mostrar.
                   </p>
-
                 </div>
 
                 <button
@@ -947,14 +1320,11 @@ onUnmounted(() => {
                 >
                   ×
                 </button>
-
               </div>
 
               <div
                 class="customizer-options"
               >
-
-                <!-- STATS -->
 
                 <label
                   class="customizer-option"
@@ -984,8 +1354,6 @@ onUnmounted(() => {
                   />
                 </label>
 
-                <!-- OVERVIEW -->
-
                 <label
                   class="customizer-option"
                 >
@@ -1014,8 +1382,6 @@ onUnmounted(() => {
                   />
                 </label>
 
-                <!-- DEVICES -->
-
                 <label
                   class="customizer-option"
                 >
@@ -1043,8 +1409,6 @@ onUnmounted(() => {
                     "
                   />
                 </label>
-
-                <!-- ACTIVITY -->
 
                 <label
                   class="customizer-option"
@@ -1079,7 +1443,6 @@ onUnmounted(() => {
               <div
                 class="customizer-footer"
               >
-
                 <button
                   class="reset-dashboard-button"
                   type="button"
@@ -1099,15 +1462,12 @@ onUnmounted(() => {
                 >
                   Listo
                 </button>
-
               </div>
 
             </aside>
           </div>
 
-          <!-- =================================================
-               STATS
-          ================================================== -->
+          <!-- STATS -->
 
           <section
             v-if="
@@ -1117,34 +1477,24 @@ onUnmounted(() => {
             class="stats-grid dashboard-panel"
           >
 
-            <article
-              class="stat-card"
-            >
-              <div
-                class="stat-top"
-              >
+            <article class="stat-card">
+              <div class="stat-top">
                 <div
                   class="stat-icon blue"
                 >
                   ▣
                 </div>
 
-                <span
-                  class="stat-tag"
-                >
+                <span class="stat-tag">
                   TOTAL
                 </span>
               </div>
 
-              <div
-                class="stat-value"
-              >
+              <div class="stat-value">
                 {{ devices.length }}
               </div>
 
-              <div
-                class="stat-name"
-              >
+              <div class="stat-name">
                 Dispositivos
               </div>
 
@@ -1155,12 +1505,8 @@ onUnmounted(() => {
               </div>
             </article>
 
-            <article
-              class="stat-card"
-            >
-              <div
-                class="stat-top"
-              >
+            <article class="stat-card">
+              <div class="stat-top">
                 <div
                   class="stat-icon green"
                 >
@@ -1174,15 +1520,11 @@ onUnmounted(() => {
                 </span>
               </div>
 
-              <div
-                class="stat-value"
-              >
+              <div class="stat-value">
                 {{ onlineDevices }}
               </div>
 
-              <div
-                class="stat-name"
-              >
+              <div class="stat-name">
                 En línea
               </div>
 
@@ -1193,12 +1535,8 @@ onUnmounted(() => {
               </div>
             </article>
 
-            <article
-              class="stat-card"
-            >
-              <div
-                class="stat-top"
-              >
+            <article class="stat-card">
+              <div class="stat-top">
                 <div
                   class="stat-icon orange"
                 >
@@ -1212,15 +1550,11 @@ onUnmounted(() => {
                 </span>
               </div>
 
-              <div
-                class="stat-value"
-              >
+              <div class="stat-value">
                 {{ offlineDevices }}
               </div>
 
-              <div
-                class="stat-name"
-              >
+              <div class="stat-name">
                 Fuera de línea
               </div>
 
@@ -1231,34 +1565,24 @@ onUnmounted(() => {
               </div>
             </article>
 
-            <article
-              class="stat-card"
-            >
-              <div
-                class="stat-top"
-              >
+            <article class="stat-card">
+              <div class="stat-top">
                 <div
                   class="stat-icon purple"
                 >
                   ◉
                 </div>
 
-                <span
-                  class="stat-tag"
-                >
+                <span class="stat-tag">
                   TOTAL
                 </span>
               </div>
 
-              <div
-                class="stat-value"
-              >
+              <div class="stat-value">
                 {{ totalSensors }}
               </div>
 
-              <div
-                class="stat-name"
-              >
+              <div class="stat-name">
                 Sensores
               </div>
 
@@ -1271,9 +1595,7 @@ onUnmounted(() => {
 
           </section>
 
-          <!-- =================================================
-               OVERVIEW
-          ================================================== -->
+          <!-- OVERVIEW -->
 
           <section
             v-if="
@@ -1283,8 +1605,6 @@ onUnmounted(() => {
             class="overview-grid dashboard-panel"
           >
 
-            <!-- GENERAL STATUS -->
-
             <article
               class="overview-card"
             >
@@ -1292,7 +1612,6 @@ onUnmounted(() => {
                 class="overview-header"
               >
                 <div>
-
                   <span
                     class="section-kicker"
                   >
@@ -1302,7 +1621,6 @@ onUnmounted(() => {
                   <h3>
                     Estado general
                   </h3>
-
                 </div>
 
                 <span
@@ -1320,13 +1638,11 @@ onUnmounted(() => {
                       : 'Offline'
                   }}
                 </span>
-
               </div>
 
               <div
                 class="overview-body"
               >
-
                 <div
                   class="health-ring"
                 >
@@ -1346,7 +1662,6 @@ onUnmounted(() => {
                 <div
                   class="health-details"
                 >
-
                   <div
                     class="health-row"
                   >
@@ -1354,7 +1669,6 @@ onUnmounted(() => {
                       <i
                         class="green-dot"
                       ></i>
-
                       En línea
                     </span>
 
@@ -1370,7 +1684,6 @@ onUnmounted(() => {
                       <i
                         class="gray-dot"
                       ></i>
-
                       Fuera de línea
                     </span>
 
@@ -1386,7 +1699,6 @@ onUnmounted(() => {
                       <i
                         class="blue-dot"
                       ></i>
-
                       Actuadores
                     </span>
 
@@ -1394,23 +1706,17 @@ onUnmounted(() => {
                       {{ totalLeds }}
                     </strong>
                   </div>
-
                 </div>
-
               </div>
             </article>
-
-            <!-- SYSTEM -->
 
             <article
               class="overview-card quick-card"
             >
-
               <div
                 class="overview-header"
               >
                 <div>
-
                   <span
                     class="section-kicker"
                   >
@@ -1420,13 +1726,10 @@ onUnmounted(() => {
                   <h3>
                     Sistema
                   </h3>
-
                 </div>
               </div>
 
-              <div
-                class="quick-list"
-              >
+              <div class="quick-list">
 
                 <div
                   class="quick-item"
@@ -1510,14 +1813,11 @@ onUnmounted(() => {
                 </div>
 
               </div>
-
             </article>
 
           </section>
 
-          <!-- =================================================
-               DEVICES
-          ================================================== -->
+          <!-- DEVICES -->
 
           <section
             v-if="
@@ -1530,9 +1830,7 @@ onUnmounted(() => {
             <div
               class="section-heading"
             >
-
               <div>
-
                 <span
                   class="section-kicker"
                 >
@@ -1546,7 +1844,6 @@ onUnmounted(() => {
                 <p>
                   Controla tus ESP32 conectados.
                 </p>
-
               </div>
 
               <button
@@ -1558,12 +1855,8 @@ onUnmounted(() => {
                 "
               >
                 Ver todos
-
-                <span>
-                  →
-                </span>
+                <span>→</span>
               </button>
-
             </div>
 
             <div
@@ -1575,29 +1868,39 @@ onUnmounted(() => {
                 v-for="device in devices"
                 :key="device.id"
                 class="device-card"
+                :class="{
+                  'device-offline':
+                    deviceIsOffline(
+                      device
+                    )
+                }"
               >
+
+                <!-- OFFLINE OVERLAY -->
+
+                
 
                 <div
                   class="device-card-top"
                 >
-
                   <div
                     class="device-info"
                   >
-
                     <div
                       class="device-avatar"
                       :class="{
                         online:
                           device.status ===
-                          'online'
+                          'online',
+                        offline:
+                          device.status ===
+                          'offline'
                       }"
                     >
                       ESP
                     </div>
 
                     <div>
-
                       <h4>
                         {{ device.name }}
                       </h4>
@@ -1607,9 +1910,7 @@ onUnmounted(() => {
                         <b>·</b>
                         {{ device.location }}
                       </span>
-
                     </div>
-
                   </div>
 
                   <div
@@ -1623,11 +1924,36 @@ onUnmounted(() => {
                     {{
                       device.status ===
                       'online'
-                        ? 'Online'
-                        : 'Offline'
+                        ? 'ONLINE'
+                        : 'OFFLINE'
                     }}
                   </div>
+                </div>
 
+                <div
+                  v-if="
+                    deviceIsOffline(
+                      device
+                    )
+                  "
+                  class="device-offline-message"
+                >
+                  <span
+                    class="offline-message-icon"
+                  >
+                    !
+                  </span>
+
+                  <div>
+                    <strong>
+                      Sin comunicación
+                    </strong>
+
+                    <span>
+                      Los controles están
+                      temporalmente bloqueados.
+                    </span>
+                  </div>
                 </div>
 
                 <div
@@ -1656,23 +1982,37 @@ onUnmounted(() => {
                     v-for="led in device.leds"
                     :key="led.id"
                     class="led-control"
+                    :class="{
+                      changing:
+                        isLedChanging(
+                          device.id,
+                          led.id
+                        ),
+                      disabled:
+                        device.status !==
+                        'online'
+                    }"
                   >
 
                     <div
                       class="led-info"
                     >
-
                       <div
                         class="led-indicator"
                         :class="{
-                          on: led.state
+                          on:
+                            led.state,
+                          changing:
+                            isLedChanging(
+                              device.id,
+                              led.id
+                            )
                         }"
                       >
                         <span></span>
                       </div>
 
                       <div>
-
                         <strong>
                           {{ led.name }}
                         </strong>
@@ -1681,20 +2021,30 @@ onUnmounted(() => {
                           GPIO
                           {{ led.gpio }}
                         </small>
-
                       </div>
-
                     </div>
 
                     <button
                       class="led-button"
                       :class="{
                         active:
-                          led.state
+                          led.state,
+                        changing:
+                          isLedChanging(
+                            device.id,
+                            led.id
+                          ),
+                        offline:
+                          device.status !==
+                          'online'
                       }"
                       :disabled="
                         device.status !==
-                        'online'
+                          'online' ||
+                        isLedChanging(
+                          device.id,
+                          led.id
+                        )
                       "
                       @click="
                         toggleLed(
@@ -1708,11 +2058,16 @@ onUnmounted(() => {
                         class="led-button-dot"
                       ></span>
 
-                      {{
-                        led.state
-                          ? 'ON'
-                          : 'OFF'
-                      }}
+                      <span
+                        class="led-button-label"
+                      >
+                        {{
+                          ledButtonLabel(
+                            device,
+                            led
+                          )
+                        }}
+                      </span>
 
                     </button>
 
@@ -1738,7 +2093,6 @@ onUnmounted(() => {
               v-else
               class="empty-state"
             >
-
               <div
                 class="empty-state-icon"
               >
@@ -1757,7 +2111,6 @@ onUnmounted(() => {
               <div
                 class="waiting-status"
               >
-
                 <span
                   class="status-dot"
                   :class="{
@@ -1771,16 +2124,12 @@ onUnmounted(() => {
                     ? 'WebSocket conectado'
                     : 'Esperando conexión WebSocket'
                 }}
-
               </div>
-
             </div>
 
           </section>
 
-          <!-- =================================================
-               SYSTEM STATUS / ACTIVITY
-          ================================================== -->
+          <!-- ACTIVITY -->
 
           <section
             v-if="
@@ -1789,13 +2138,10 @@ onUnmounted(() => {
             "
             class="activity-heading dashboard-panel"
           >
-
             <div
               class="section-heading"
             >
-
               <div>
-
                 <span
                   class="section-kicker"
                 >
@@ -1805,19 +2151,15 @@ onUnmounted(() => {
                 <h3>
                   Actividad reciente
                 </h3>
-
               </div>
-
             </div>
 
             <div
               class="system-status"
             >
-
               <div
                 class="system-item"
               >
-
                 <div
                   class="system-icon green"
                 >
@@ -1825,7 +2167,6 @@ onUnmounted(() => {
                 </div>
 
                 <div>
-
                   <strong>
                     Sistema IoT activo
                   </strong>
@@ -1834,7 +2175,6 @@ onUnmounted(() => {
                     Comunicación WebSocket
                     en tiempo real
                   </span>
-
                 </div>
 
                 <span
@@ -1842,13 +2182,11 @@ onUnmounted(() => {
                 >
                   Ahora
                 </span>
-
               </div>
 
               <div
                 class="system-item"
               >
-
                 <div
                   class="system-icon blue"
                 >
@@ -1856,7 +2194,6 @@ onUnmounted(() => {
                 </div>
 
                 <div>
-
                   <strong>
                     Estado sincronizado
                   </strong>
@@ -1865,7 +2202,6 @@ onUnmounted(() => {
                     Los dispositivos son
                     administrados por el servidor
                   </span>
-
                 </div>
 
                 <span
@@ -1873,18 +2209,13 @@ onUnmounted(() => {
                 >
                   Ahora
                 </span>
-
               </div>
-
             </div>
-
           </section>
 
         </section>
 
-        <!-- =================================================
-             DEVICES PAGE
-        ================================================== -->
+        <!-- DEVICES PAGE -->
 
         <section
           v-else-if="
@@ -1897,7 +2228,6 @@ onUnmounted(() => {
           <div
             class="page-intro"
           >
-
             <span
               class="section-kicker"
             >
@@ -1912,7 +2242,6 @@ onUnmounted(() => {
               Administra los dispositivos
               ESP32 registrados.
             </p>
-
           </div>
 
           <div
@@ -1924,24 +2253,47 @@ onUnmounted(() => {
               v-for="device in devices"
               :key="device.id"
               class="device-card"
+              :class="{
+                'device-offline':
+                  deviceIsOffline(
+                    device
+                  )
+              }"
             >
+
+              <div
+                v-if="
+                  deviceIsOffline(
+                    device
+                  )
+                "
+                class="device-offline-banner"
+              >
+                <span>●</span>
+                DISPOSITIVO OFFLINE
+              </div>
 
               <div
                 class="device-card-top"
               >
-
                 <div
                   class="device-info"
                 >
-
                   <div
                     class="device-avatar"
+                    :class="{
+                      online:
+                        device.status ===
+                        'online',
+                      offline:
+                        device.status ===
+                        'offline'
+                    }"
                   >
                     ESP
                   </div>
 
                   <div>
-
                     <h4>
                       {{ device.name }}
                     </h4>
@@ -1951,9 +2303,7 @@ onUnmounted(() => {
                       <b>·</b>
                       {{ device.location }}
                     </span>
-
                   </div>
-
                 </div>
 
                 <div
@@ -1967,11 +2317,36 @@ onUnmounted(() => {
                   {{
                     device.status ===
                     'online'
-                      ? 'Online'
-                      : 'Offline'
+                      ? 'ONLINE'
+                      : 'OFFLINE'
                   }}
                 </div>
+              </div>
 
+              <div
+                v-if="
+                  deviceIsOffline(
+                    device
+                  )
+                "
+                class="offline-message"
+              >
+                <span
+                  class="offline-message-icon"
+                >
+                  !
+                </span>
+
+                <div>
+                  <strong>
+                    Sin comunicación
+                  </strong>
+
+                  <small>
+                    Los controles están
+                    temporalmente bloqueados.
+                  </small>
+                </div>
               </div>
 
               <div
@@ -1982,23 +2357,37 @@ onUnmounted(() => {
                   v-for="led in device.leds"
                   :key="led.id"
                   class="led-control"
+                  :class="{
+                    changing:
+                      isLedChanging(
+                        device.id,
+                        led.id
+                      ),
+                    disabled:
+                      device.status !==
+                      'online'
+                  }"
                 >
 
                   <div
                     class="led-info"
                   >
-
                     <div
                       class="led-indicator"
                       :class="{
-                        on: led.state
+                        on:
+                          led.state,
+                        changing:
+                          isLedChanging(
+                            device.id,
+                            led.id
+                          )
                       }"
                     >
                       <span></span>
                     </div>
 
                     <div>
-
                       <strong>
                         {{ led.name }}
                       </strong>
@@ -2007,20 +2396,30 @@ onUnmounted(() => {
                         GPIO
                         {{ led.gpio }}
                       </small>
-
                     </div>
-
                   </div>
 
                   <button
                     class="led-button"
                     :class="{
                       active:
-                        led.state
+                        led.state,
+                      changing:
+                        isLedChanging(
+                          device.id,
+                          led.id
+                        ),
+                      offline:
+                        device.status !==
+                        'online'
                     }"
                     :disabled="
                       device.status !==
-                      'online'
+                        'online' ||
+                      isLedChanging(
+                        device.id,
+                        led.id
+                      )
                     "
                     @click="
                       toggleLed(
@@ -2029,19 +2428,32 @@ onUnmounted(() => {
                       )
                     "
                   >
-
                     <span
                       class="led-button-dot"
                     ></span>
 
-                    {{
-                      led.state
-                        ? 'ON'
-                        : 'OFF'
-                    }}
-
+                    <span
+                      class="led-button-label"
+                    >
+                      {{
+                        ledButtonLabel(
+                          device,
+                          led
+                        )
+                      }}
+                    </span>
                   </button>
 
+                </div>
+
+                <div
+                  v-if="
+                    device.leds.length ===
+                    0
+                  "
+                  class="no-actuators"
+                >
+                  Sin actuadores configurados
                 </div>
 
               </div>
@@ -2054,7 +2466,6 @@ onUnmounted(() => {
             v-else
             class="empty-state"
           >
-
             <div
               class="empty-state-icon"
             >
@@ -2069,14 +2480,11 @@ onUnmounted(() => {
               Esperando el registro
               de dispositivos ESP32.
             </p>
-
           </div>
 
         </section>
 
-        <!-- =================================================
-             SENSORS
-        ================================================== -->
+        <!-- SENSORS -->
 
         <section
           v-else-if="
@@ -2089,7 +2497,6 @@ onUnmounted(() => {
           <div
             class="page-intro"
           >
-
             <span
               class="section-kicker"
             >
@@ -2104,13 +2511,11 @@ onUnmounted(() => {
               Administra los sensores
               asociados a tus dispositivos.
             </p>
-
           </div>
 
           <div
             class="module-placeholder"
           >
-
             <div
               class="placeholder-icon purple"
             >
@@ -2132,14 +2537,11 @@ onUnmounted(() => {
             >
               PRÓXIMAMENTE
             </span>
-
           </div>
 
         </section>
 
-        <!-- =================================================
-             USERS
-        ================================================== -->
+        <!-- USERS -->
 
         <section
           v-else
@@ -2149,7 +2551,6 @@ onUnmounted(() => {
           <div
             class="page-intro"
           >
-
             <span
               class="section-kicker"
             >
@@ -2164,13 +2565,11 @@ onUnmounted(() => {
               Administra usuarios y permisos
               de la plataforma.
             </p>
-
           </div>
 
           <div
             class="module-placeholder"
           >
-
             <div
               class="placeholder-icon blue"
             >
@@ -2191,7 +2590,6 @@ onUnmounted(() => {
             >
               PRÓXIMAMENTE
             </span>
-
           </div>
 
         </section>
