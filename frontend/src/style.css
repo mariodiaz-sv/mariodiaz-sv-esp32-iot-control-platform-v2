@@ -3364,3 +3364,69 @@ input[type="checkbox"]:checked {
     box-shadow:
       15px 0 40px rgba(0, 0, 0, 0.2);
   }
+  /*temperatura*/
+  /* =====================================================
+   TARJETA DE TEMPERATURA - COMPACTA
+===================================================== */
+.temperature-control {
+  cursor: default;
+}
+
+.temperature-indicator {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.temperature-indicator span {
+  font-size: 16px;
+}
+
+.temperature-value {
+  margin-left: auto;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ef4444;
+  white-space: nowrap;
+}
+/*PARA SEPARAR SENSORES Y ACTUADORES*/
+.hardware-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.hardware-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hardware-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.hardware-group .led-grid {
+  margin-top: 0;
+}
+
+.temperature-control {
+  cursor: default;
+}
+
+.temperature-indicator {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.temperature-indicator span {
+  font-size: 16px;
+}
+
+.temperature-value {
+  margin-left: auto;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ef4444;
+  white-space: nowrap;
+}

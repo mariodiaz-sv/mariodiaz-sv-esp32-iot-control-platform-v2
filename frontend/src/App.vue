@@ -4,11 +4,21 @@ import { getHealth } from './services/api'
 
 type DeviceStatus = 'online' | 'offline'
 
-interface Led {
+interface Actuator {
   id: number
   name: string
+  type: string
   gpio: number
   state: boolean
+}
+
+interface Sensor {
+  id: number
+  name: string
+  type: string
+  gpio: number
+  simulated?: boolean
+  temperature?: number
 }
 
 interface Device {
@@ -18,14 +28,27 @@ interface Device {
   location: string
   status: DeviceStatus
   registered: boolean
-  leds: Led[]
+  actuators: Actuator[]
+    sensors: Sensor[]
 }
 
-interface WebSocketLed {
+//sensor
+interface WebSocketSensor {
   id: number
   name: string
+  type: string
   gpio: number
-  state: 'ON' | 'OFF'
+  simulated?: boolean
+  temperature?: number
+}
+//fin sensor
+
+interface WebSocketActuator {
+  id: number
+  name: string
+  type: string
+  gpio: number
+  state: 'ON' | 'OFF' | boolean
 }
 
 interface WebSocketDevice {
@@ -33,7 +56,8 @@ interface WebSocketDevice {
   name: string
   registered?: boolean
   online?: boolean
-  leds?: WebSocketLed[]
+  actuators?: WebSocketActuator[]
+  sensors?: WebSocketSensor[]
 }
 
 interface WebSocketStatusMessage {
@@ -65,91 +89,131 @@ const apiVersion = ref('')
 const wsConnected = ref(false)
 const ws = ref<WebSocket | null>(null)
 
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let componentUnmounted = false
+
 /* =====================================================
    DEVICES
 ===================================================== */
 
 const devices = ref<Device[]>([])
-const totalSensors = ref(0)
-
 /* =====================================================
-   LED PENDING / CONFIRMATION
+   HISTORIAL DE TEMPERATURA
+   Guarda temporalmente las últimas 30 lecturas
+   recibidas desde el WebSocket.
 ===================================================== */
 
-/*
- * Guarda temporalmente los LEDs que tienen un comando
- * enviado pero todavía no confirmado por el servidor.
- *
- * key:
- *   deviceId-ledId
- *
- * value:
- *   estado que estamos esperando recibir.
- */
+interface TemperaturePoint {
+  time: string
+  temperature: number
+}
 
-const pendingLedCommands = ref<
-  Record<string, boolean>
+const temperatureHistory = ref<
+  Record<number, TemperaturePoint[]>
 >({})
+
+const MAX_TEMPERATURE_POINTS = 30
+
+const totalSensors = ref(0)
+/* =====================================================
+   TEMPERATURA - DATOS PARA LA TARJETA Y GRÁFICO
+===================================================== */
+
+function getTemperatureSensor(
+  device: Device
+): Sensor | undefined {
+  return device.sensors?.find(
+    sensor =>
+      sensor.type === 'temperature' &&
+      sensor.temperature !== undefined
+  )
+}
+
+function getTemperatureHistory(
+  deviceId: number
+): TemperaturePoint[] {
+  return temperatureHistory.value[deviceId] ?? []
+}
+
+function getTemperatureMin(
+  deviceId: number
+): number {
+  const history =
+    getTemperatureHistory(deviceId)
+
+  if (!history.length) {
+    return 0
+  }
+
+  return Math.min(
+    ...history.map(
+      point => point.temperature
+    )
+  )
+}
+
+function getTemperatureMax(
+  deviceId: number
+): number {
+  const history =
+    getTemperatureHistory(deviceId)
+
+  if (!history.length) {
+    return 0
+  }
+
+  return Math.max(
+    ...history.map(
+      point => point.temperature
+    )
+  )
+}
+
+/* =====================================================
+   ACTUATOR PENDING
+===================================================== */
+
+const pendingActuatorCommands = ref<Record<string, boolean>>({})
 
 const pendingTimers = new Map<
   string,
   ReturnType<typeof setTimeout>
 >()
 
-function getLedKey(
+function getActuatorKey(
   deviceId: number,
-  ledId: number
+  actuatorId: number
 ) {
-  return `${deviceId}-${ledId}`
+  return `${deviceId}-${actuatorId}`
 }
 
-/*function isLedChanging(
+function isActuatorChanging(
   deviceId: number,
-  ledId: number
+  actuatorId: number
 ) {
-  return Boolean(
-    pendingLedCommands.value[
-      getLedKey(deviceId, ledId)
-    ]
-  )
-}*/
-function isLedChanging(
-  deviceId: number,
-  ledId: number
-) {
-  const key = getLedKey(
-    deviceId,
-    ledId
-  )
+  const key = getActuatorKey(deviceId, actuatorId)
 
-  return (
-    Object.prototype.hasOwnProperty.call(
-      pendingLedCommands.value,
-      key
-    )
+  return Object.prototype.hasOwnProperty.call(
+    pendingActuatorCommands.value,
+    key
   )
 }
 
-
-function clearLedPending(
+function clearActuatorPending(
   deviceId: number,
-  ledId: number
+  actuatorId: number
 ) {
-  const key = getLedKey(
-    deviceId,
-    ledId
-  )
+  const key = getActuatorKey(deviceId, actuatorId)
 
   const next = {
-    ...pendingLedCommands.value,
+    ...pendingActuatorCommands.value,
   }
 
   delete next[key]
 
-  pendingLedCommands.value = next
+  pendingActuatorCommands.value = next
 
-  const timer =
-    pendingTimers.get(key)
+  const timer = pendingTimers.get(key)
 
   if (timer) {
     clearTimeout(timer)
@@ -157,40 +221,46 @@ function clearLedPending(
   }
 }
 
-function setLedPending(
+function setActuatorPending(
   device: Device,
-  led: Led,
+  actuator: Actuator,
   expectedState: boolean
 ) {
-  const key = getLedKey(
+  const key = getActuatorKey(
     device.id,
-    led.id
+    actuator.id
   )
 
-  pendingLedCommands.value = {
-    ...pendingLedCommands.value,
+  pendingActuatorCommands.value = {
+    ...pendingActuatorCommands.value,
     [key]: expectedState,
   }
 
-  /*
-   * Timeout de seguridad.
-   *
-   * Si el servidor no confirma el cambio,
-   * dejamos de mostrar CAMBIANDO... después
-   * de unos segundos.
-   */
-  const existingTimer =
-    pendingTimers.get(key)
+  const existingTimer = pendingTimers.get(key)
 
   if (existingTimer) {
     clearTimeout(existingTimer)
   }
 
   const timer = setTimeout(() => {
-    clearLedPending(
-      device.id,
-      led.id
-    )
+    const pending =
+      pendingActuatorCommands.value[key]
+
+    if (pending !== undefined) {
+      console.warn(
+        '[ACTUATOR] Timeout esperando confirmación:',
+        {
+          device_id: device.id,
+          actuator_id: actuator.id,
+          expected_state: expectedState,
+        }
+      )
+
+      clearActuatorPending(
+        device.id,
+        actuator.id
+      )
+    }
   }, 8000)
 
   pendingTimers.set(key, timer)
@@ -202,36 +272,42 @@ function setLedPending(
 
 const onlineDevices = computed(() =>
   devices.value.filter(
-    device =>
-      device.status === 'online'
+    device => device.status === 'online'
   ).length
 )
 
 const offlineDevices = computed(() =>
   devices.value.filter(
-    device =>
-      device.status === 'offline'
+    device => device.status === 'offline'
   ).length
 )
 
-const totalLeds = computed(() =>
+const totalActuators = computed(() =>
   devices.value.reduce(
     (total, device) =>
-      total + device.leds.length,
+      total + device.actuators.length,
     0
   )
 )
 
-const activeLeds = computed(() =>
+const activeActuators = computed(() =>
   devices.value.reduce(
     (total, device) =>
       total +
-      device.leds.filter(
-        led => led.state
+      device.actuators.filter(
+        actuator => actuator.state
       ).length,
     0
   )
 )
+
+/*const totalLeds = computed(() =>
+  totalActuators.value
+)
+
+const activeLeds = computed(() =>
+  activeActuators.value
+)*/
 
 const availability = computed(() => {
   if (!devices.value.length) {
@@ -271,10 +347,9 @@ const defaultDashboardPreferences: DashboardPreferences = {
 
 function loadDashboardPreferences(): DashboardPreferences {
   try {
-    const saved =
-      localStorage.getItem(
-        'iot-dashboard-preferences'
-      )
+    const saved = localStorage.getItem(
+      'iot-dashboard-preferences'
+    )
 
     if (!saved) {
       return {
@@ -282,8 +357,7 @@ function loadDashboardPreferences(): DashboardPreferences {
       }
     }
 
-    const parsed =
-      JSON.parse(saved)
+    const parsed = JSON.parse(saved)
 
     return {
       ...defaultDashboardPreferences,
@@ -306,8 +380,7 @@ const dashboardPreferences =
     loadDashboardPreferences()
   )
 
-const customizerOpen =
-  ref(false)
+const customizerOpen = ref(false)
 
 function saveDashboardPreferences() {
   localStorage.setItem(
@@ -321,12 +394,8 @@ function saveDashboardPreferences() {
 function toggleDashboardPanel(
   panel: DashboardPanel
 ) {
-  dashboardPreferences.value[
-    panel
-  ] =
-    !dashboardPreferences.value[
-      panel
-    ]
+  dashboardPreferences.value[panel] =
+    !dashboardPreferences.value[panel]
 
   saveDashboardPreferences()
 }
@@ -348,10 +417,7 @@ function closeCustomizer() {
 ===================================================== */
 
 const pageTitle = computed(() => {
-  const titles: Record<
-    string,
-    string
-  > = {
+  const titles: Record<string, string> = {
     dashboard: 'Dashboard',
     devices: 'Dispositivos',
     sensors: 'Sensores',
@@ -365,44 +431,34 @@ const pageTitle = computed(() => {
 })
 
 /* =====================================================
-   THEME FUNCTIONS
+   THEME
 ===================================================== */
 
 function applyTheme() {
   document.documentElement.setAttribute(
     'data-theme',
-    isDark.value
-      ? 'dark'
-      : 'light'
+    isDark.value ? 'dark' : 'light'
   )
 }
 
 function toggleTheme() {
-  isDark.value =
-    !isDark.value
+  isDark.value = !isDark.value
 
   localStorage.setItem(
     'iot-theme',
-    isDark.value
-      ? 'dark'
-      : 'light'
+    isDark.value ? 'dark' : 'light'
   )
 
   applyTheme()
 }
 
 /* =====================================================
-   NAVIGATION FUNCTIONS
+   NAVIGATION
 ===================================================== */
 
-function selectSection(
-  section: string
-) {
-  activeSection.value =
-    section
-
-  mobileMenuOpen.value =
-    false
+function selectSection(section: string) {
+  activeSection.value = section
+  mobileMenuOpen.value = false
 }
 
 function toggleMobileMenu() {
@@ -416,8 +472,7 @@ function toggleMobileMenu() {
 
 async function checkApi() {
   try {
-    const health =
-      await getHealth()
+    const health = await getHealth()
 
     apiOnline.value =
       health.status === 'ok'
@@ -439,114 +494,190 @@ async function checkApi() {
    WEBSOCKET MAPPING
 ===================================================== */
 
-function mapWebSocketLed(
-  wsLed: WebSocketLed
-): Led {
+function normalizeActuatorState(
+  state: WebSocketActuator['state']
+): boolean {
+  if (typeof state === 'boolean') {
+    return state
+  }
+
+  return state.toUpperCase() === 'ON'
+}
+
+function mapWebSocketActuator(
+  wsActuator: WebSocketActuator
+): Actuator {
   return {
-    id: Number(wsLed.id),
-    name: wsLed.name,
-    gpio: Number(wsLed.gpio),
-    state:
-      wsLed.state === 'ON',
+    id: Number(wsActuator.id),
+
+    name: wsActuator.name,
+
+    type: wsActuator.type,
+
+    gpio: Number(wsActuator.gpio),
+
+    state: normalizeActuatorState(
+      wsActuator.state
+    ),
   }
 }
 
 function mapWebSocketDevice(
   wsDevice: WebSocketDevice
 ): Device {
-  const leds =
-    Array.isArray(
-      wsDevice.leds
-    )
-      ? wsDevice.leds.map(
-          mapWebSocketLed
+  const actuators =
+    Array.isArray(wsDevice.actuators)
+      ? wsDevice.actuators.map(
+          mapWebSocketActuator
         )
       : []
-
+const sensors =
+  Array.isArray(wsDevice.sensors)
+    ? wsDevice.sensors.map(
+        (sensor): Sensor => ({
+          id: Number(sensor.id),
+          name: sensor.name,
+          type: sensor.type,
+          gpio: Number(sensor.gpio),
+          simulated: sensor.simulated ?? false,
+          temperature:
+            sensor.temperature !== undefined
+              ? Number(sensor.temperature)
+              : undefined,
+        })
+      )
+    : []
   return {
     id: Number(wsDevice.id),
+
     name: wsDevice.name,
+
     type: 'ESP32',
-    location:
-      'Sin ubicación',
+
+    location: 'Sin ubicación',
+
     registered:
-      wsDevice.registered ??
-      true,
+      wsDevice.registered ?? true,
+
     status:
       wsDevice.online === false
         ? 'offline'
         : 'online',
-    leds,
+
+    actuators,
+    sensors,
   }
 }
 
 /* =====================================================
-   CONFIRM LED COMMANDS
+   ACTUATOR CONFIRMATIONS
 ===================================================== */
 
-function processLedConfirmations(
+function processActuatorConfirmations(
   serverDevices: WebSocketDevice[]
 ) {
-  for (
-    const serverDevice of serverDevices
-  ) {
+  for (const serverDevice of serverDevices) {
     if (
       !Array.isArray(
-        serverDevice.leds
+        serverDevice.actuators
       )
     ) {
       continue
     }
 
     for (
-      const serverLed of
-        serverDevice.leds
+      const serverActuator of
+        serverDevice.actuators
     ) {
+      const deviceId =
+        Number(serverDevice.id)
+
+      const actuatorId =
+        Number(serverActuator.id)
+
       const key =
-        getLedKey(
-          Number(
-            serverDevice.id
-          ),
-          Number(serverLed.id)
+        getActuatorKey(
+          deviceId,
+          actuatorId
         )
 
       const pending =
-        pendingLedCommands.value[
-          key
-        ]
+        pendingActuatorCommands.value[key]
 
-      if (
-        pending === undefined
-      ) {
+      if (pending === undefined) {
         continue
       }
 
-      const confirmedState =
-        serverLed.state === 'ON'
+      const receivedState =
+        normalizeActuatorState(
+          serverActuator.state
+        )
+
+      console.log(
+        '[ACTUATOR] Confirmación STATUS:',
+        {
+          deviceId,
+          actuatorId,
+          expected: pending,
+          received: receivedState,
+        }
+      )
 
       /*
-       * El servidor devolvió exactamente
-       * el estado que esperábamos.
+       * CONFIRMACIÓN CORRECTA
+       *
+       * El servidor confirmó exactamente
+       * el estado que solicitamos.
        */
-      if (
-        confirmedState ===
-        pending
-      ) {
-        clearLedPending(
-          Number(
-            serverDevice.id
-          ),
-          Number(serverLed.id)
+      if (receivedState === pending) {
+        console.log(
+          '[ACTUATOR] ✓ Confirmado:',
+          {
+            deviceId,
+            actuatorId,
+            state: receivedState,
+          }
         )
+
+        clearActuatorPending(
+          deviceId,
+          actuatorId
+        )
+
+        continue
       }
+
+      /*
+       * IMPORTANTE:
+       *
+       * Si recibimos un estado diferente,
+       * NO quitamos CAMBIANDO...
+       *
+       * Esto significa que el ESP32/servidor
+       * todavía no ejecutó correctamente
+       * el comando.
+       */
+      console.warn(
+        '[ACTUATOR] ✗ Estado no confirmado:',
+        {
+          deviceId,
+          actuatorId,
+          expected: pending,
+          received: receivedState,
+        }
+      )
     }
   }
 }
 
+/* =====================================================
+   UPDATE DEVICES
+===================================================== */
+
 function updateDevicesFromServer(
   serverDevices: WebSocketDevice[]
 ) {
-  processLedConfirmations(
+  processActuatorConfirmations(
     serverDevices
   )
 
@@ -554,16 +685,69 @@ function updateDevicesFromServer(
     serverDevices.map(
       mapWebSocketDevice
     )
+  /* =====================================================
+     REGISTRAR HISTORIAL DE TEMPERATURA
+     Guarda cada lectura recibida desde el WebSocket.
+  ===================================================== */
+
+  for (const device of serverDevices) {
+    if (!Array.isArray(device.sensors)) {
+      continue
+    }
+
+    const temperatureSensor = device.sensors.find(
+      sensor =>
+        sensor.type === 'temperature' &&
+        sensor.temperature !== undefined
+    )
+
+    if (!temperatureSensor) {
+      continue
+    }
+
+    const temperature = Number(
+      temperatureSensor.temperature
+    )
+
+    if (!Number.isFinite(temperature)) {
+      continue
+    }
+
+    const deviceId = Number(device.id)
+
+    if (!temperatureHistory.value[deviceId]) {
+      temperatureHistory.value[deviceId] = []
+    }
+
+    temperatureHistory.value[deviceId].push({
+      time: new Date().toLocaleTimeString(
+        'es-SV',
+        {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }
+      ),
+      temperature,
+    })
+
+    if (
+      temperatureHistory.value[deviceId].length >
+      MAX_TEMPERATURE_POINTS
+    ) {
+      temperatureHistory.value[deviceId] =
+        temperatureHistory.value[deviceId].slice(
+          -MAX_TEMPERATURE_POINTS
+        )
+    }
+  }
 
   /*
    * Si un dispositivo está offline,
-   * todos sus comandos pendientes se
-   * cancelan porque ya no podemos esperar
-   * una confirmación válida.
+   * cancelamos sus comandos pendientes.
    */
   for (
-    const device of
-      devices.value
+    const device of devices.value
   ) {
     if (
       device.status !==
@@ -573,12 +757,12 @@ function updateDevicesFromServer(
     }
 
     for (
-      const led of
-        device.leds
+      const actuator of
+        device.actuators
     ) {
-      clearLedPending(
+      clearActuatorPending(
         device.id,
-        led.id
+        actuator.id
       )
     }
   }
@@ -586,10 +770,34 @@ function updateDevicesFromServer(
 
 /* =====================================================
    WEBSOCKET CONNECTION
-   NOT MODIFIED
 ===================================================== */
 
+function scheduleReconnect() {
+  if (componentUnmounted) {
+    return
+  }
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+
+    if (
+      !componentUnmounted &&
+      !wsConnected.value
+    ) {
+      connectWebSocket()
+    }
+  }, 3000)
+}
+
 function connectWebSocket() {
+  if (componentUnmounted) {
+    return
+  }
+
   if (
     ws.value &&
     (
@@ -614,11 +822,15 @@ function connectWebSocket() {
   ws.value = socket
 
   socket.onopen = () => {
-    wsConnected.value =
-      true
+    if (componentUnmounted) {
+      socket.close()
+      return
+    }
+
+    wsConnected.value = true
 
     console.log(
-      '[WS] Conectado correctamente'
+      '[WS] ✓ Conectado correctamente'
     )
   }
 
@@ -629,6 +841,14 @@ function connectWebSocket() {
           event.data
         )
 
+      console.log(
+        '[WS] RX <- SERVER:',
+        data
+      )
+
+      /*
+       * STATUS
+       */
       if (
         data.type ===
         'status'
@@ -649,6 +869,9 @@ function connectWebSocket() {
         return
       }
 
+      /*
+       * REGISTRATION
+       */
       if (
         data.type ===
         'registration'
@@ -661,6 +884,9 @@ function connectWebSocket() {
         return
       }
 
+      /*
+       * COMMAND
+       */
       if (
         data.type ===
         'command'
@@ -669,6 +895,8 @@ function connectWebSocket() {
           '[WS] Comando recibido:',
           data
         )
+
+        return
       }
     } catch (error) {
       console.error(
@@ -679,8 +907,7 @@ function connectWebSocket() {
   }
 
   socket.onerror = error => {
-    wsConnected.value =
-      false
+    wsConnected.value = false
 
     console.error(
       '[WS] Error:',
@@ -689,44 +916,62 @@ function connectWebSocket() {
   }
 
   socket.onclose = () => {
-    wsConnected.value =
-      false
+    wsConnected.value = false
 
     console.log(
       '[WS] Conexión cerrada'
     )
+
+    if (
+      ws.value === socket
+    ) {
+      ws.value = null
+    }
+
+    scheduleReconnect()
   }
 }
 
 /* =====================================================
-   LED CONTROL
+   ACTUATOR CONTROL
 ===================================================== */
 
-function toggleLed(
+function toggleActuator(
   device: Device,
-  led: Led
+  actuator: Actuator
 ) {
   /*
-   * Dispositivo offline:
-   * no permitimos enviar comandos.
+   * Dispositivo offline.
    */
   if (
     device.status !==
     'online'
   ) {
+    console.warn(
+      '[ACTUATOR] Dispositivo offline:',
+      device.id
+    )
+
     return
   }
 
   /*
-   * Evita enviar otro comando
-   * mientras esperamos confirmación.
+   * Ya existe un comando pendiente.
    */
   if (
-    isLedChanging(
+    isActuatorChanging(
       device.id,
-      led.id
+      actuator.id
     )
   ) {
+    console.warn(
+      '[ACTUATOR] Comando ya pendiente:',
+      {
+        device_id: device.id,
+        actuator_id: actuator.id,
+      }
+    )
+
     return
   }
 
@@ -746,28 +991,33 @@ function toggleLed(
   }
 
   /*
-   * Calculamos el estado que esperamos
-   * recibir después del toggle.
+   * Estado que esperamos recibir
+   * posteriormente en STATUS.
    */
   const expectedState =
-    !led.state
+    !actuator.state
 
+  /*
+   * Protocolo actual.
+   */
   const message = {
     command:
-      'led_toggle',
+      'actuator_toggle',
+
     device_id:
-      device.id,
-    led_id:
-      led.id,
+      Number(device.id),
+
+    actuator_id:
+      Number(actuator.id),
   }
 
   /*
-   * Marcamos CAMBIANDO...
-   * antes de enviar.
+   * Primero marcamos el comando
+   * como pendiente.
    */
-  setLedPending(
+  setActuatorPending(
     device,
-    led,
+    actuator,
     expectedState
   )
 
@@ -775,15 +1025,30 @@ function toggleLed(
     ws.value.send(
       JSON.stringify(message)
     )
+
+    console.log(
+      '[WS] TX -> SERVER:',
+      message
+    )
+
+    console.log(
+      '[ACTUATOR] Esperando STATUS:',
+      {
+        device_id: device.id,
+        actuator_id: actuator.id,
+        expected_state:
+          expectedState,
+      }
+    )
   } catch (error) {
     console.error(
       '[WS] Error enviando comando:',
       error
     )
 
-    clearLedPending(
+    clearActuatorPending(
       device.id,
-      led.id
+      actuator.id
     )
   }
 }
@@ -801,9 +1066,9 @@ function deviceIsOffline(
   )
 }
 
-/*function ledButtonLabel(
+function actuatorButtonLabel(
   device: Device,
-  led: Led
+  actuator: Actuator
 ) {
   if (
     deviceIsOffline(device)
@@ -812,48 +1077,48 @@ function deviceIsOffline(
   }
 
   if (
-    isLedChanging(
+    isActuatorChanging(
       device.id,
-      led.id
+      actuator.id
     )
   ) {
     return 'CAMBIANDO...'
   }
 
-  return led.state
+  return actuator.state
     ? 'ON'
     : 'OFF'
 }
-*/
-function ledButtonLabel(
-  device: Device,
-  led: Led
-) {
-  if (
-    deviceIsOffline(device)
-  ) {
-    return 'BLOQUEADO'
-  }
 
-  return led.state
-    ? 'ON'
-    : 'OFF'
-}
 /* =====================================================
    LIFECYCLE
 ===================================================== */
 
 onMounted(() => {
+  componentUnmounted = false
+
   applyTheme()
   checkApi()
   connectWebSocket()
 })
 
 onUnmounted(() => {
+  componentUnmounted = true
+
+  if (reconnectTimer) {
+    clearTimeout(
+      reconnectTimer
+    )
+
+    reconnectTimer = null
+  }
+
   if (ws.value) {
     ws.value.close()
     ws.value = null
   }
+
+  wsConnected.value = false
 
   for (
     const timer of
@@ -865,6 +1130,7 @@ onUnmounted(() => {
   pendingTimers.clear()
 })
 </script>
+
 
 <template>
   <div class="app-shell">
@@ -889,6 +1155,7 @@ onUnmounted(() => {
       }"
     >
       <div class="brand">
+
         <div class="brand-logo">
           <span>⚡</span>
         </div>
@@ -912,12 +1179,15 @@ onUnmounted(() => {
         >
           ×
         </button>
+
       </div>
 
       <div class="sidebar-content">
+
         <nav>
 
           <div class="nav-section">
+
             <span class="nav-title">
               PLATAFORMA
             </span>
@@ -1000,9 +1270,11 @@ onUnmounted(() => {
                 Sensores
               </span>
             </button>
+
           </div>
 
           <div class="nav-section">
+
             <span class="nav-title">
               ADMINISTRACIÓN
             </span>
@@ -1030,9 +1302,11 @@ onUnmounted(() => {
                 Usuarios
               </span>
             </button>
+
           </div>
 
         </nav>
+
       </div>
 
       <div class="sidebar-bottom">
@@ -1044,6 +1318,7 @@ onUnmounted(() => {
               !wsConnected
           }"
         >
+
           <span
             class="connection-dot"
             :class="{
@@ -1053,6 +1328,7 @@ onUnmounted(() => {
           ></span>
 
           <div>
+
             <strong>
               WebSocket
             </strong>
@@ -1064,7 +1340,9 @@ onUnmounted(() => {
                   : 'Desconectado'
               }}
             </span>
+
           </div>
+
         </div>
 
         <div class="sidebar-version">
@@ -1072,6 +1350,7 @@ onUnmounted(() => {
         </div>
 
       </div>
+
     </aside>
 
     <!-- MAIN -->
@@ -1100,6 +1379,7 @@ onUnmounted(() => {
           </button>
 
           <div>
+
             <span
               class="topbar-breadcrumb"
             >
@@ -1109,6 +1389,7 @@ onUnmounted(() => {
             <h1>
               {{ pageTitle }}
             </h1>
+
           </div>
 
         </div>
@@ -1141,6 +1422,7 @@ onUnmounted(() => {
               online: apiOnline
             }"
           >
+
             <span
               class="status-dot"
             ></span>
@@ -1152,6 +1434,7 @@ onUnmounted(() => {
                   : 'API offline'
               }}
             </span>
+
           </div>
 
           <div class="user-profile">
@@ -1161,6 +1444,7 @@ onUnmounted(() => {
             </div>
 
             <div class="user-details">
+
               <strong>
                 Administrador
               </strong>
@@ -1168,11 +1452,13 @@ onUnmounted(() => {
               <span>
                 Admin
               </span>
+
             </div>
 
           </div>
 
         </div>
+
       </header>
 
       <!-- SCROLL AREA -->
@@ -1194,9 +1480,11 @@ onUnmounted(() => {
           <section
             class="dashboard-hero"
           >
+
             <div
               class="hero-content"
             >
+
               <span
                 class="section-kicker"
               >
@@ -1213,6 +1501,7 @@ onUnmounted(() => {
                 y controla tus actuadores
                 desde un solo lugar.
               </p>
+
             </div>
 
             <div
@@ -1222,6 +1511,7 @@ onUnmounted(() => {
                   !wsConnected
               }"
             >
+
               <span
                 class="live-dot"
                 :class="{
@@ -1235,7 +1525,9 @@ onUnmounted(() => {
                   ? 'Sistema en vivo'
                   : 'Sin conexión'
               }}
+
             </div>
+
           </section>
 
           <!-- TOOLBAR -->
@@ -1243,9 +1535,11 @@ onUnmounted(() => {
           <div
             class="dashboard-toolbar"
           >
+
             <div
               class="dashboard-toolbar-content"
             >
+
               <span
                 class="dashboard-toolbar-title"
               >
@@ -1258,6 +1552,7 @@ onUnmounted(() => {
                 Personaliza la información
                 que quieres visualizar.
               </span>
+
             </div>
 
             <button
@@ -1270,6 +1565,7 @@ onUnmounted(() => {
               <span>⚙</span>
               Personalizar
             </button>
+
           </div>
 
           <!-- CUSTOMIZER -->
@@ -1281,6 +1577,7 @@ onUnmounted(() => {
               closeCustomizer
             "
           >
+
             <aside
               class="dashboard-customizer"
               role="dialog"
@@ -1291,7 +1588,9 @@ onUnmounted(() => {
               <div
                 class="customizer-header"
               >
+
                 <div>
+
                   <span
                     class="section-kicker"
                   >
@@ -1308,6 +1607,7 @@ onUnmounted(() => {
                     Selecciona los paneles
                     que quieres mostrar.
                   </p>
+
                 </div>
 
                 <button
@@ -1320,6 +1620,7 @@ onUnmounted(() => {
                 >
                   ×
                 </button>
+
               </div>
 
               <div
@@ -1329,7 +1630,9 @@ onUnmounted(() => {
                 <label
                   class="customizer-option"
                 >
+
                   <div>
+
                     <strong>
                       Estadísticas
                     </strong>
@@ -1338,6 +1641,7 @@ onUnmounted(() => {
                       Resumen de dispositivos
                       y sensores.
                     </span>
+
                   </div>
 
                   <input
@@ -1352,12 +1656,15 @@ onUnmounted(() => {
                       )
                     "
                   />
+
                 </label>
 
                 <label
                   class="customizer-option"
                 >
+
                   <div>
+
                     <strong>
                       Estado general
                     </strong>
@@ -1366,6 +1673,7 @@ onUnmounted(() => {
                       Disponibilidad e
                       infraestructura.
                     </span>
+
                   </div>
 
                   <input
@@ -1380,12 +1688,15 @@ onUnmounted(() => {
                       )
                     "
                   />
+
                 </label>
 
                 <label
                   class="customizer-option"
                 >
+
                   <div>
+
                     <strong>
                       Dispositivos
                     </strong>
@@ -1394,6 +1705,7 @@ onUnmounted(() => {
                       ESP32 y actuadores
                       conectados.
                     </span>
+
                   </div>
 
                   <input
@@ -1408,12 +1720,15 @@ onUnmounted(() => {
                       )
                     "
                   />
+
                 </label>
 
                 <label
                   class="customizer-option"
                 >
+
                   <div>
+
                     <strong>
                       Actividad reciente
                     </strong>
@@ -1422,6 +1737,7 @@ onUnmounted(() => {
                       Estado y eventos
                       del sistema.
                     </span>
+
                   </div>
 
                   <input
@@ -1436,6 +1752,7 @@ onUnmounted(() => {
                       )
                     "
                   />
+
                 </label>
 
               </div>
@@ -1443,6 +1760,7 @@ onUnmounted(() => {
               <div
                 class="customizer-footer"
               >
+
                 <button
                   class="reset-dashboard-button"
                   type="button"
@@ -1462,9 +1780,11 @@ onUnmounted(() => {
                 >
                   Listo
                 </button>
+
               </div>
 
             </aside>
+
           </div>
 
           <!-- STATS -->
@@ -1478,7 +1798,9 @@ onUnmounted(() => {
           >
 
             <article class="stat-card">
+
               <div class="stat-top">
+
                 <div
                   class="stat-icon blue"
                 >
@@ -1488,6 +1810,7 @@ onUnmounted(() => {
                 <span class="stat-tag">
                   TOTAL
                 </span>
+
               </div>
 
               <div class="stat-value">
@@ -1503,10 +1826,13 @@ onUnmounted(() => {
               >
                 Registrados en la plataforma
               </div>
+
             </article>
 
             <article class="stat-card">
+
               <div class="stat-top">
+
                 <div
                   class="stat-icon green"
                 >
@@ -1518,6 +1844,7 @@ onUnmounted(() => {
                 >
                   ACTIVO
                 </span>
+
               </div>
 
               <div class="stat-value">
@@ -1533,10 +1860,13 @@ onUnmounted(() => {
               >
                 Dispositivos disponibles
               </div>
+
             </article>
 
             <article class="stat-card">
+
               <div class="stat-top">
+
                 <div
                   class="stat-icon orange"
                 >
@@ -1548,6 +1878,7 @@ onUnmounted(() => {
                 >
                   ALERTA
                 </span>
+
               </div>
 
               <div class="stat-value">
@@ -1563,10 +1894,13 @@ onUnmounted(() => {
               >
                 Requieren atención
               </div>
+
             </article>
 
             <article class="stat-card">
+
               <div class="stat-top">
+
                 <div
                   class="stat-icon purple"
                 >
@@ -1576,6 +1910,7 @@ onUnmounted(() => {
                 <span class="stat-tag">
                   TOTAL
                 </span>
+
               </div>
 
               <div class="stat-value">
@@ -1591,6 +1926,7 @@ onUnmounted(() => {
               >
                 Sensores registrados
               </div>
+
             </article>
 
           </section>
@@ -1608,10 +1944,13 @@ onUnmounted(() => {
             <article
               class="overview-card"
             >
+
               <div
                 class="overview-header"
               >
+
                 <div>
+
                   <span
                     class="section-kicker"
                   >
@@ -1621,6 +1960,7 @@ onUnmounted(() => {
                   <h3>
                     Estado general
                   </h3>
+
                 </div>
 
                 <span
@@ -1630,6 +1970,7 @@ onUnmounted(() => {
                       !wsConnected
                   }"
                 >
+
                   <span></span>
 
                   {{
@@ -1637,18 +1978,23 @@ onUnmounted(() => {
                       ? 'Operativo'
                       : 'Offline'
                   }}
+
                 </span>
+
               </div>
 
               <div
                 class="overview-body"
               >
+
                 <div
                   class="health-ring"
                 >
+
                   <div
                     class="health-ring-inner"
                   >
+
                     <strong>
                       {{ availability }}%
                     </strong>
@@ -1656,67 +2002,91 @@ onUnmounted(() => {
                     <span>
                       disponibilidad
                     </span>
+
                   </div>
+
                 </div>
 
                 <div
                   class="health-details"
                 >
+
                   <div
                     class="health-row"
                   >
+
                     <span>
+
                       <i
                         class="green-dot"
                       ></i>
+
                       En línea
+
                     </span>
 
                     <strong>
                       {{ onlineDevices }}
                     </strong>
+
                   </div>
 
                   <div
                     class="health-row"
                   >
+
                     <span>
+
                       <i
                         class="gray-dot"
                       ></i>
+
                       Fuera de línea
+
                     </span>
 
                     <strong>
                       {{ offlineDevices }}
                     </strong>
+
                   </div>
 
                   <div
                     class="health-row"
                   >
+
                     <span>
+
                       <i
                         class="blue-dot"
                       ></i>
+
                       Actuadores
+
                     </span>
 
                     <strong>
-                      {{ totalLeds }}
+                      {{ totalActuators }}
                     </strong>
+
                   </div>
+
                 </div>
+
               </div>
+
             </article>
 
             <article
               class="overview-card quick-card"
             >
+
               <div
                 class="overview-header"
               >
+
                 <div>
+
                   <span
                     class="section-kicker"
                   >
@@ -1726,7 +2096,9 @@ onUnmounted(() => {
                   <h3>
                     Sistema
                   </h3>
+
                 </div>
+
               </div>
 
               <div class="quick-list">
@@ -1734,6 +2106,7 @@ onUnmounted(() => {
                 <div
                   class="quick-item"
                 >
+
                   <div
                     class="quick-icon green"
                   >
@@ -1741,6 +2114,7 @@ onUnmounted(() => {
                   </div>
 
                   <div>
+
                     <strong>
                       API Laravel
                     </strong>
@@ -1752,6 +2126,7 @@ onUnmounted(() => {
                           : 'Sin conexión'
                       }}
                     </small>
+
                   </div>
 
                   <span
@@ -1761,11 +2136,13 @@ onUnmounted(() => {
                         apiOnline
                     }"
                   ></span>
+
                 </div>
 
                 <div
                   class="quick-item"
                 >
+
                   <div
                     class="quick-icon blue"
                   >
@@ -1773,6 +2150,7 @@ onUnmounted(() => {
                   </div>
 
                   <div>
+
                     <strong>
                       WebSocket
                     </strong>
@@ -1780,6 +2158,7 @@ onUnmounted(() => {
                     <small>
                       Comunicación en tiempo real
                     </small>
+
                   </div>
 
                   <span
@@ -1789,11 +2168,13 @@ onUnmounted(() => {
                         wsConnected
                     }"
                   ></span>
+
                 </div>
 
                 <div
                   class="quick-item"
                 >
+
                   <div
                     class="quick-icon purple"
                   >
@@ -1801,18 +2182,22 @@ onUnmounted(() => {
                   </div>
 
                   <div>
+
                     <strong>
                       Actuadores activos
                     </strong>
 
                     <small>
-                      {{ activeLeds }}
+                      {{ activeActuators }}
                       actualmente encendidos
                     </small>
+
                   </div>
+
                 </div>
 
               </div>
+
             </article>
 
           </section>
@@ -1830,7 +2215,9 @@ onUnmounted(() => {
             <div
               class="section-heading"
             >
+
               <div>
+
                 <span
                   class="section-kicker"
                 >
@@ -1844,6 +2231,7 @@ onUnmounted(() => {
                 <p>
                   Controla tus ESP32 conectados.
                 </p>
+
               </div>
 
               <button
@@ -1857,6 +2245,7 @@ onUnmounted(() => {
                 Ver todos
                 <span>→</span>
               </button>
+
             </div>
 
             <div
@@ -1876,16 +2265,14 @@ onUnmounted(() => {
                 }"
               >
 
-                <!-- OFFLINE OVERLAY -->
-
-                
-
                 <div
                   class="device-card-top"
                 >
+
                   <div
                     class="device-info"
                   >
+
                     <div
                       class="device-avatar"
                       :class="{
@@ -1901,6 +2288,7 @@ onUnmounted(() => {
                     </div>
 
                     <div>
+
                       <h4>
                         {{ device.name }}
                       </h4>
@@ -1910,7 +2298,9 @@ onUnmounted(() => {
                         <b>·</b>
                         {{ device.location }}
                       </span>
+
                     </div>
+
                   </div>
 
                   <div
@@ -1919,6 +2309,7 @@ onUnmounted(() => {
                       device.status
                     "
                   >
+
                     <span></span>
 
                     {{
@@ -1927,8 +2318,13 @@ onUnmounted(() => {
                         ? 'ONLINE'
                         : 'OFFLINE'
                     }}
+
                   </div>
+
                 </div>
+              
+
+
 
                 <div
                   v-if="
@@ -1938,6 +2334,7 @@ onUnmounted(() => {
                   "
                   class="device-offline-message"
                 >
+
                   <span
                     class="offline-message-icon"
                   >
@@ -1945,6 +2342,7 @@ onUnmounted(() => {
                   </span>
 
                   <div>
+
                     <strong>
                       Sin comunicación
                     </strong>
@@ -1953,16 +2351,19 @@ onUnmounted(() => {
                       Los controles están
                       temporalmente bloqueados.
                     </span>
+
                   </div>
+
                 </div>
 
                 <div
                   class="device-meta"
                 >
+
                   <span>
-                    {{ device.leds.length }}
+                    {{ device.actuators.length }}
                     actuador{{
-                      device.leds.length ===
+                      device.actuators.length ===
                       1
                         ? ''
                         : 'es'
@@ -1972,118 +2373,185 @@ onUnmounted(() => {
                   <span>
                     ID #{{ device.id }}
                   </span>
-                </div>
-
-                <div
-                  class="led-grid"
-                >
-
-                  <div
-                    v-for="led in device.leds"
-                    :key="led.id"
-                    class="led-control"
-                    :class="{
-                      changing:
-                        isLedChanging(
-                          device.id,
-                          led.id
-                        ),
-                      disabled:
-                        device.status !==
-                        'online'
-                    }"
-                  >
-
-                    <div
-                      class="led-info"
-                    >
-                      <div
-                        class="led-indicator"
-                        :class="{
-                          on:
-                            led.state,
-                          changing:
-                            isLedChanging(
-                              device.id,
-                              led.id
-                            )
-                        }"
-                      >
-                        <span></span>
-                      </div>
-
-                      <div>
-                        <strong>
-                          {{ led.name }}
-                        </strong>
-
-                        <small>
-                          GPIO
-                          {{ led.gpio }}
-                        </small>
-                      </div>
-                    </div>
-
-                    <button
-                      class="led-button"
-                      :class="{
-                        active:
-                          led.state,
-                        changing:
-                          isLedChanging(
-                            device.id,
-                            led.id
-                          ),
-                        offline:
-                          device.status !==
-                          'online'
-                      }"
-                      :disabled="
-                        device.status !==
-                          'online' ||
-                        isLedChanging(
-                          device.id,
-                          led.id
-                        )
-                      "
-                      @click="
-                        toggleLed(
-                          device,
-                          led
-                        )
-                      "
-                    >
-
-                      <span
-                        class="led-button-dot"
-                      ></span>
-
-                      <span
-                        class="led-button-label"
-                      >
-                        {{
-                          ledButtonLabel(
-                            device,
-                            led
-                          )
-                        }}
-                      </span>
-
-                    </button>
-
-                  </div>
-
-                  <div
-                    v-if="
-                      device.leds.length ===
-                      0
-                    "
-                    class="no-actuators"
-                  >
-                    Sin actuadores configurados
-                  </div>
 
                 </div>
+
+                
+                <!-- =================================================
+     SENSORES
+================================================== -->
+
+<div
+  v-if="
+    device.sensors &&
+    device.sensors.length
+  "
+  class="device-subsection"
+>
+
+  <div class="subsection-title">
+    <span class="section-kicker">SENSORES</span>
+  </div>
+
+  <div class="led-grid">
+
+    <div
+      v-for="sensor in device.sensors"
+      :key="sensor.id"
+      class="led-control temperature-control"
+    >
+
+      <div class="led-info">
+
+        <div class="led-indicator temperature-indicator">
+          <span>🌡️</span>
+        </div>
+
+        <div>
+
+          <strong>
+            {{ sensor.name }}
+          </strong>
+
+          <small>
+            {{ sensor.type }}
+            · GPIO {{ sensor.gpio }}
+          </small>
+
+        </div>
+
+      </div>
+
+      <div class="temperature-value">
+        {{
+          sensor.temperature !== undefined
+            ? sensor.temperature.toFixed(1)
+            : '--'
+        }}°C
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+<!-- =================================================
+     ACTUADORES
+================================================== -->
+
+<div class="device-subsection">
+
+  <div class="subsection-title">
+    <span class="section-kicker">ACTUADORES</span>
+  </div>
+
+  <div class="led-grid">
+
+    <div
+      v-for="actuator in device.actuators"
+      :key="actuator.id"
+      class="led-control"
+      :class="{
+        changing:
+          isActuatorChanging(
+            device.id,
+            actuator.id
+          ),
+        disabled:
+          device.status !== 'online'
+      }"
+    >
+
+      <div class="led-info">
+
+        <div
+          class="led-indicator"
+          :class="{
+            on: actuator.state,
+            changing:
+              isActuatorChanging(
+                device.id,
+                actuator.id
+              )
+          }"
+        >
+          <span></span>
+        </div>
+
+        <div>
+
+          <strong>
+            {{ actuator.name }}
+          </strong>
+
+          <small>
+            {{ actuator.type }}
+            · GPIO {{ actuator.gpio }}
+          </small>
+
+        </div>
+
+      </div>
+
+      <button
+        class="led-button"
+        :class="{
+          active: actuator.state,
+          changing:
+            isActuatorChanging(
+              device.id,
+              actuator.id
+            ),
+          offline:
+            device.status !== 'online'
+        }"
+        :disabled="
+          device.status !== 'online' ||
+          isActuatorChanging(
+            device.id,
+            actuator.id
+          )
+        "
+        @click="
+          toggleActuator(
+            device,
+            actuator
+          )
+        "
+      >
+
+        <span
+          class="led-button-dot"
+        ></span>
+
+        <span
+          class="led-button-label"
+        >
+          {{
+            actuatorButtonLabel(
+              device,
+              actuator
+            )
+          }}
+        </span>
+
+      </button>
+
+    </div>
+
+    <div
+      v-if="device.actuators.length === 0"
+      class="no-actuators"
+    >
+      Sin actuadores configurados
+    </div>
+
+  </div>
+
+</div>
+
 
               </article>
 
@@ -2093,6 +2561,7 @@ onUnmounted(() => {
               v-else
               class="empty-state"
             >
+
               <div
                 class="empty-state-icon"
               >
@@ -2111,6 +2580,7 @@ onUnmounted(() => {
               <div
                 class="waiting-status"
               >
+
                 <span
                   class="status-dot"
                   :class="{
@@ -2124,7 +2594,9 @@ onUnmounted(() => {
                     ? 'WebSocket conectado'
                     : 'Esperando conexión WebSocket'
                 }}
+
               </div>
+
             </div>
 
           </section>
@@ -2138,10 +2610,13 @@ onUnmounted(() => {
             "
             class="activity-heading dashboard-panel"
           >
+
             <div
               class="section-heading"
             >
+
               <div>
+
                 <span
                   class="section-kicker"
                 >
@@ -2151,15 +2626,19 @@ onUnmounted(() => {
                 <h3>
                   Actividad reciente
                 </h3>
+
               </div>
+
             </div>
 
             <div
               class="system-status"
             >
+
               <div
                 class="system-item"
               >
+
                 <div
                   class="system-icon green"
                 >
@@ -2167,6 +2646,7 @@ onUnmounted(() => {
                 </div>
 
                 <div>
+
                   <strong>
                     Sistema IoT activo
                   </strong>
@@ -2175,6 +2655,7 @@ onUnmounted(() => {
                     Comunicación WebSocket
                     en tiempo real
                   </span>
+
                 </div>
 
                 <span
@@ -2182,11 +2663,13 @@ onUnmounted(() => {
                 >
                   Ahora
                 </span>
+
               </div>
 
               <div
                 class="system-item"
               >
+
                 <div
                   class="system-icon blue"
                 >
@@ -2194,6 +2677,7 @@ onUnmounted(() => {
                 </div>
 
                 <div>
+
                   <strong>
                     Estado sincronizado
                   </strong>
@@ -2202,6 +2686,7 @@ onUnmounted(() => {
                     Los dispositivos son
                     administrados por el servidor
                   </span>
+
                 </div>
 
                 <span
@@ -2209,8 +2694,11 @@ onUnmounted(() => {
                 >
                   Ahora
                 </span>
+
               </div>
+
             </div>
+
           </section>
 
         </section>
@@ -2228,6 +2716,7 @@ onUnmounted(() => {
           <div
             class="page-intro"
           >
+
             <span
               class="section-kicker"
             >
@@ -2242,6 +2731,7 @@ onUnmounted(() => {
               Administra los dispositivos
               ESP32 registrados.
             </p>
+
           </div>
 
           <div
@@ -2276,9 +2766,11 @@ onUnmounted(() => {
               <div
                 class="device-card-top"
               >
+
                 <div
                   class="device-info"
                 >
+
                   <div
                     class="device-avatar"
                     :class="{
@@ -2294,6 +2786,7 @@ onUnmounted(() => {
                   </div>
 
                   <div>
+
                     <h4>
                       {{ device.name }}
                     </h4>
@@ -2303,7 +2796,9 @@ onUnmounted(() => {
                       <b>·</b>
                       {{ device.location }}
                     </span>
+
                   </div>
+
                 </div>
 
                 <div
@@ -2312,6 +2807,7 @@ onUnmounted(() => {
                     device.status
                   "
                 >
+
                   <span></span>
 
                   {{
@@ -2320,7 +2816,9 @@ onUnmounted(() => {
                       ? 'ONLINE'
                       : 'OFFLINE'
                   }}
+
                 </div>
+
               </div>
 
               <div
@@ -2331,6 +2829,7 @@ onUnmounted(() => {
                 "
                 class="offline-message"
               >
+
                 <span
                   class="offline-message-icon"
                 >
@@ -2338,6 +2837,7 @@ onUnmounted(() => {
                 </span>
 
                 <div>
+
                   <strong>
                     Sin comunicación
                   </strong>
@@ -2346,117 +2846,206 @@ onUnmounted(() => {
                     Los controles están
                     temporalmente bloqueados.
                   </small>
+
                 </div>
+
               </div>
 
               <div
-                class="led-grid"
+                class="device-meta"
               >
 
-                <div
-                  v-for="led in device.leds"
-                  :key="led.id"
-                  class="led-control"
-                  :class="{
-                    changing:
-                      isLedChanging(
-                        device.id,
-                        led.id
-                      ),
-                    disabled:
-                      device.status !==
-                      'online'
-                  }"
-                >
+                <span>
+                  {{ device.actuators.length }}
+                  actuador{{
+                    device.actuators.length ===
+                    1
+                      ? ''
+                      : 'es'
+                  }}
+                </span>
 
-                  <div
-                    class="led-info"
-                  >
-                    <div
-                      class="led-indicator"
-                      :class="{
-                        on:
-                          led.state,
-                        changing:
-                          isLedChanging(
-                            device.id,
-                            led.id
-                          )
-                      }"
-                    >
-                      <span></span>
-                    </div>
-
-                    <div>
-                      <strong>
-                        {{ led.name }}
-                      </strong>
-
-                      <small>
-                        GPIO
-                        {{ led.gpio }}
-                      </small>
-                    </div>
-                  </div>
-
-                  <button
-                    class="led-button"
-                    :class="{
-                      active:
-                        led.state,
-                      changing:
-                        isLedChanging(
-                          device.id,
-                          led.id
-                        ),
-                      offline:
-                        device.status !==
-                        'online'
-                    }"
-                    :disabled="
-                      device.status !==
-                        'online' ||
-                      isLedChanging(
-                        device.id,
-                        led.id
-                      )
-                    "
-                    @click="
-                      toggleLed(
-                        device,
-                        led
-                      )
-                    "
-                  >
-                    <span
-                      class="led-button-dot"
-                    ></span>
-
-                    <span
-                      class="led-button-label"
-                    >
-                      {{
-                        ledButtonLabel(
-                          device,
-                          led
-                        )
-                      }}
-                    </span>
-                  </button>
-
-                </div>
-
-                <div
-                  v-if="
-                    device.leds.length ===
-                    0
-                  "
-                  class="no-actuators"
-                >
-                  Sin actuadores configurados
-                </div>
+                <span>
+                  ID #{{ device.id }}
+                </span>
 
               </div>
+
+              <!-- =================================================
+     SENSORES
+================================================== -->
+
+<div
+  v-if="
+    device.sensors &&
+    device.sensors.length
+  "
+  class="device-subsection"
+>
+
+  <div class="subsection-title">
+    <span class="section-kicker">SENSORES</span>
+  </div>
+
+  <div class="led-grid">
+
+    <div
+      v-for="sensor in device.sensors"
+      :key="sensor.id"
+      class="led-control temperature-control"
+    >
+
+      <div class="led-info">
+
+        <div class="led-indicator temperature-indicator">
+          <span>🌡️</span>
+        </div>
+
+        <div>
+
+          <strong>
+            {{ sensor.name }}
+          </strong>
+
+          <small>
+            {{ sensor.type }}
+            · GPIO {{ sensor.gpio }}
+          </small>
+
+        </div>
+
+      </div>
+
+      <div class="temperature-value">
+        {{
+          sensor.temperature !== undefined
+            ? sensor.temperature.toFixed(1)
+            : '--'
+        }}°C
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+<!-- =================================================
+     ACTUADORES
+================================================== -->
+
+<div class="device-subsection">
+
+  <div class="subsection-title">
+    <span class="section-kicker">ACTUADORES</span>
+  </div>
+
+  <div class="led-grid">
+
+    <div
+      v-for="actuator in device.actuators"
+      :key="actuator.id"
+      class="led-control"
+      :class="{
+        changing:
+          isActuatorChanging(
+            device.id,
+            actuator.id
+          ),
+        disabled:
+          device.status !== 'online'
+      }"
+    >
+
+      <div class="led-info">
+
+        <div
+          class="led-indicator"
+          :class="{
+            on: actuator.state,
+            changing:
+              isActuatorChanging(
+                device.id,
+                actuator.id
+              )
+          }"
+        >
+          <span></span>
+        </div>
+
+        <div>
+
+          <strong>
+            {{ actuator.name }}
+          </strong>
+
+          <small>
+            {{ actuator.type }}
+            · GPIO {{ actuator.gpio }}
+          </small>
+
+        </div>
+
+      </div>
+
+      <button
+        class="led-button"
+        :class="{
+          active: actuator.state,
+          changing:
+            isActuatorChanging(
+              device.id,
+              actuator.id
+            ),
+          offline:
+            device.status !== 'online'
+        }"
+        :disabled="
+          device.status !== 'online' ||
+          isActuatorChanging(
+            device.id,
+            actuator.id
+          )
+        "
+        @click="
+          toggleActuator(
+            device,
+            actuator
+          )
+        "
+      >
+
+        <span
+          class="led-button-dot"
+        ></span>
+
+        <span
+          class="led-button-label"
+        >
+          {{
+            actuatorButtonLabel(
+              device,
+              actuator
+            )
+          }}
+        </span>
+
+      </button>
+
+    </div>
+
+    <div
+      v-if="device.actuators.length === 0"
+      class="no-actuators"
+    >
+      Sin actuadores configurados
+    </div>
+
+  </div>
+
+</div>
+
 
             </article>
 
@@ -2466,6 +3055,7 @@ onUnmounted(() => {
             v-else
             class="empty-state"
           >
+
             <div
               class="empty-state-icon"
             >
@@ -2480,6 +3070,7 @@ onUnmounted(() => {
               Esperando el registro
               de dispositivos ESP32.
             </p>
+
           </div>
 
         </section>
@@ -2497,6 +3088,7 @@ onUnmounted(() => {
           <div
             class="page-intro"
           >
+
             <span
               class="section-kicker"
             >
@@ -2511,11 +3103,13 @@ onUnmounted(() => {
               Administra los sensores
               asociados a tus dispositivos.
             </p>
+
           </div>
 
           <div
             class="module-placeholder"
           >
+
             <div
               class="placeholder-icon purple"
             >
@@ -2537,6 +3131,7 @@ onUnmounted(() => {
             >
               PRÓXIMAMENTE
             </span>
+
           </div>
 
         </section>
@@ -2551,6 +3146,7 @@ onUnmounted(() => {
           <div
             class="page-intro"
           >
+
             <span
               class="section-kicker"
             >
@@ -2565,11 +3161,13 @@ onUnmounted(() => {
               Administra usuarios y permisos
               de la plataforma.
             </p>
+
           </div>
 
           <div
             class="module-placeholder"
           >
+
             <div
               class="placeholder-icon blue"
             >
@@ -2590,11 +3188,14 @@ onUnmounted(() => {
             >
               PRÓXIMAMENTE
             </span>
+
           </div>
 
         </section>
 
       </div>
+
     </main>
+
   </div>
 </template>

@@ -16,32 +16,7 @@ use Ratchet\WebSocket\WsServer;
 |--------------------------------------------------------------------------
 | IoT CONTROL WEBSOCKET SERVER
 |--------------------------------------------------------------------------
-|
-| El servidor mantiene el estado de todos los dispositivos.
-|
-| El ESP32:
-|
-|   1. Se conecta
-|   2. Hace handshake WebSocket
-|   3. Envía register_device
-|   4. Declara sus LEDs
-|
-| Vue:
-|
-|   1. Se conecta
-|   2. Recibe status
-|   3. Muestra exactamente lo que el servidor conoce
-|   4. Envía led_toggle
-|
-| IMPORTANTE:
-|
-| El servidor NO inventa LEDs.
-| El servidor NO asume GPIO 18, 19, etc.
-| El ESP32 es quien declara sus LEDs.
-|
-|--------------------------------------------------------------------------
 */
-
 
 class IoTWebSocketServer implements MessageComponentInterface
 {
@@ -58,26 +33,6 @@ class IoTWebSocketServer implements MessageComponentInterface
     |--------------------------------------------------------------------------
     | DISPOSITIVOS
     |--------------------------------------------------------------------------
-    |
-    | Estructura:
-    |
-    | $devices[device_id] = [
-    |     'id' => 1,
-    |     'name' => 'ESP32 Principal',
-    |     'registered' => true,
-    |     'online' => true,
-    |     'connection' => $connection,
-    |     'leds' => [
-    |         1 => [
-    |             'id' => 1,
-    |             'name' => 'LED 1',
-    |             'gpio' => 18,
-    |             'state' => false,
-    |         ],
-    |     ],
-    | ];
-    |
-    |--------------------------------------------------------------------------
     */
 
     protected $devices;
@@ -91,19 +46,18 @@ class IoTWebSocketServer implements MessageComponentInterface
 
     public function __construct()
     {
-        $this->clients =
-            new \SplObjectStorage;
-
+        $this->clients = new \SplObjectStorage;
 
         $this->devices = [];
-
 
         echo "\n";
         echo "==============================================\n";
         echo "       IoT CONTROL WEBSOCKET SERVER\n";
-        echo "                    V5\n";
+        echo "                    V7\n";
         echo "==============================================\n";
         echo "[WS] Servidor iniciado\n";
+        echo "[WS] Arquitectura: ACTUATORS + SENSORS\n";
+        echo "[WS] Heartbeat: ACTIVADO\n";
         echo "[WS] Esperando conexiones...\n";
         echo "==============================================\n";
     }
@@ -112,15 +66,6 @@ class IoTWebSocketServer implements MessageComponentInterface
     /*
     |--------------------------------------------------------------------------
     | STATUS GLOBAL
-    |--------------------------------------------------------------------------
-    |
-    | Este es el mensaje que Vue consume.
-    |
-    | Vue no necesita saber cuántos LEDs existen.
-    | Vue no necesita saber qué GPIO existen.
-    |
-    | Todo sale de aquí.
-    |
     |--------------------------------------------------------------------------
     */
 
@@ -131,52 +76,85 @@ class IoTWebSocketServer implements MessageComponentInterface
             'devices' => [],
         ];
 
-
         foreach ($this->devices as $deviceId => $device)
         {
             $deviceStatus = [
-                'id' => (int) $deviceId,
+                'id' =>
+                    (int) $deviceId,
 
                 'name' =>
-                    $device['name'],
+                    isset($device['name'])
+                        ? $device['name']
+                        : 'ESP32 #' . $deviceId,
 
                 'registered' =>
-                    (bool) $device['registered'],
+                    isset($device['registered'])
+                        ? (bool) $device['registered']
+                        : false,
 
                 'online' =>
-                    (bool) $device['online'],
+                    isset($device['online'])
+                        ? (bool) $device['online']
+                        : false,
 
-                'leds' => [],
+                /*
+                |--------------------------------------------------------------------------
+                | LAST SEEN
+                |--------------------------------------------------------------------------
+                |
+                | Timestamp Unix del último mensaje recibido del dispositivo.
+                |
+                |--------------------------------------------------------------------------
+                */
+
+                'lastSeen' =>
+                    isset($device['lastSeen'])
+                        ? (int) $device['lastSeen']
+                        : 0,
+
+                'actuators' => [],
+
+                'sensors' => [],
             ];
 
 
             /*
             |--------------------------------------------------------------------------
-            | LEDS
+            | ACTUADORES
             |--------------------------------------------------------------------------
             */
 
             if (
-                isset($device['leds']) &&
-                is_array($device['leds'])
+                isset($device['actuators']) &&
+                is_array($device['actuators'])
             )
             {
                 foreach (
-                    $device['leds']
-                    as $ledId => $led
+                    $device['actuators']
+                    as $actuatorId => $actuator
                 )
                 {
-                    $deviceStatus['leds'][] = [
-                        'id' => (int) $ledId,
+                    $deviceStatus['actuators'][] = [
+                        'id' =>
+                            (int) $actuatorId,
 
                         'name' =>
-                            $led['name'],
+                            isset($actuator['name'])
+                                ? $actuator['name']
+                                : 'Actuador ' . $actuatorId,
+
+                        'type' =>
+                            isset($actuator['type'])
+                                ? $actuator['type']
+                                : 'generic',
 
                         'gpio' =>
-                            (int) $led['gpio'],
+                            isset($actuator['gpio'])
+                                ? (int) $actuator['gpio']
+                                : 0,
 
                         'state' =>
-                            $led['state']
+                            !empty($actuator['state'])
                                 ? 'ON'
                                 : 'OFF',
                     ];
@@ -184,8 +162,28 @@ class IoTWebSocketServer implements MessageComponentInterface
             }
 
 
-            $status['devices'][] =
-                $deviceStatus;
+            /*
+            |--------------------------------------------------------------------------
+            | SENSORES
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                isset($device['sensors']) &&
+                is_array($device['sensors'])
+            )
+            {
+                foreach (
+                    $device['sensors']
+                    as $sensorId => $sensor
+                )
+                {
+                    $deviceStatus['sensors'][] = $sensor;
+                }
+            }
+
+
+            $status['devices'][] = $deviceStatus;
         }
 
 
@@ -200,26 +198,16 @@ class IoTWebSocketServer implements MessageComponentInterface
     |--------------------------------------------------------------------------
     | BROADCAST STATUS
     |--------------------------------------------------------------------------
-    |
-    | Envía el estado completo a TODOS:
-    |
-    | - Vue
-    | - otros clientes
-    |
-    |--------------------------------------------------------------------------
     */
 
     protected function broadcastStatus()
     {
-        $message =
-            $this->getStatus();
-
+        $message = $this->getStatus();
 
         echo "\n";
         echo "[WS] ===== BROADCAST STATUS =====\n";
         echo "[WS] {$message}\n";
         echo "[WS] Clientes: {$this->clients->count()}\n";
-
 
         foreach ($this->clients as $client)
         {
@@ -238,7 +226,6 @@ class IoTWebSocketServer implements MessageComponentInterface
             }
         }
 
-
         echo "[WS] ===== FIN BROADCAST =====\n";
     }
 
@@ -249,9 +236,7 @@ class IoTWebSocketServer implements MessageComponentInterface
     |--------------------------------------------------------------------------
     */
 
-    protected function getDeviceConnection(
-        $deviceId
-    )
+    protected function getDeviceConnection($deviceId)
     {
         if (
             !isset(
@@ -262,7 +247,6 @@ class IoTWebSocketServer implements MessageComponentInterface
             return null;
         }
 
-
         if (
             !isset(
                 $this->devices[$deviceId]['connection']
@@ -272,9 +256,52 @@ class IoTWebSocketServer implements MessageComponentInterface
             return null;
         }
 
+        return $this->devices[$deviceId]['connection'];
+    }
 
-        return
-            $this->devices[$deviceId]['connection'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | ACTUALIZAR LAST SEEN
+    |--------------------------------------------------------------------------
+    */
+
+    protected function touchDevice(
+    $deviceId,
+    ?ConnectionInterface $connection = null
+)
+    {
+        if (!isset($this->devices[$deviceId]))
+        {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | SI SE PROPORCIONA CONEXIÓN, VALIDARLA
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $connection !== null &&
+            isset($this->devices[$deviceId]['connection']) &&
+            $this->devices[$deviceId]['connection'] !== $connection
+        )
+        {
+            return false;
+        }
+
+
+        $this->devices[$deviceId]['online'] = true;
+        $this->devices[$deviceId]['registered'] = true;
+        $this->devices[$deviceId]['lastSeen'] = time();
+
+        if ($connection !== null)
+        {
+            $this->devices[$deviceId]['connection'] = $connection;
+        }
+
+        return true;
     }
 
 
@@ -284,9 +311,7 @@ class IoTWebSocketServer implements MessageComponentInterface
     |--------------------------------------------------------------------------
     */
 
-    protected function isValidGpio(
-        $gpio
-    )
+    protected function isValidGpio($gpio)
     {
         return
             is_numeric($gpio) &&
@@ -306,34 +331,17 @@ class IoTWebSocketServer implements MessageComponentInterface
         array $data
     )
     {
-        /*
-        |--------------------------------------------------------------------------
-        | DEVICE ID
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            !isset($data['device_id'])
-        )
+        if (!isset($data['device_id']))
         {
-            echo "[WS] Registro rechazado: ";
-            echo "device_id faltante\n";
-
+            echo "[WS] Registro rechazado: device_id faltante\n";
             return false;
         }
 
+        $deviceId = (int) $data['device_id'];
 
-        $deviceId =
-            (int) $data['device_id'];
-
-
-        if (
-            $deviceId <= 0
-        )
+        if ($deviceId <= 0)
         {
-            echo "[WS] Registro rechazado: ";
-            echo "device_id invalido\n";
-
+            echo "[WS] Registro rechazado: device_id invalido\n";
             return false;
         }
 
@@ -344,9 +352,7 @@ class IoTWebSocketServer implements MessageComponentInterface
         |--------------------------------------------------------------------------
         */
 
-        $name =
-            'ESP32 #' . $deviceId;
-
+        $name = 'ESP32 #' . $deviceId;
 
         if (
             isset($data['name']) &&
@@ -354,111 +360,94 @@ class IoTWebSocketServer implements MessageComponentInterface
             trim($data['name']) !== ''
         )
         {
-            $name =
-                trim($data['name']);
+            $name = trim($data['name']);
         }
 
 
         /*
         |--------------------------------------------------------------------------
-        | LEDS DECLARADOS POR EL ESP32
+        | ACTUADORES
         |--------------------------------------------------------------------------
         */
 
-        $leds = [];
-
+        $actuators = [];
 
         if (
-            isset($data['leds']) &&
-            is_array($data['leds'])
+            isset($data['actuators']) &&
+            is_array($data['actuators'])
         )
         {
             foreach (
-                $data['leds']
-                as $ledData
+                $data['actuators'] as $actuatorData
             )
             {
-                if (
-                    !is_array($ledData)
-                )
+                if (!is_array($actuatorData))
                 {
+                    continue;
+                }
+
+                if (!isset($actuatorData['id']))
+                {
+                    continue;
+                }
+
+                $actuatorId = (int) $actuatorData['id'];
+
+                if ($actuatorId <= 0)
+                {
+                    continue;
+                }
+
+                if (!isset($actuatorData['gpio']))
+                {
+                    continue;
+                }
+
+                $gpio = (int) $actuatorData['gpio'];
+
+                if (!$this->isValidGpio($gpio))
+                {
+                    echo "[WS] Actuador rechazado: GPIO invalido\n";
                     continue;
                 }
 
 
                 /*
                 |--------------------------------------------------------------------------
-                | ID
+                | NOMBRE
                 |--------------------------------------------------------------------------
                 */
 
-                if (
-                    !isset($ledData['id'])
-                )
-                {
-                    continue;
-                }
-
-
-                $ledId =
-                    (int) $ledData['id'];
-
+                $actuatorName =
+                    'Actuador ' . $actuatorId;
 
                 if (
-                    $ledId <= 0
+                    isset($actuatorData['name']) &&
+                    is_string($actuatorData['name']) &&
+                    trim($actuatorData['name']) !== ''
                 )
                 {
-                    continue;
+                    $actuatorName =
+                        trim($actuatorData['name']);
                 }
 
 
                 /*
                 |--------------------------------------------------------------------------
-                | GPIO
+                | TIPO
                 |--------------------------------------------------------------------------
                 */
 
-                if (
-                    !isset($ledData['gpio'])
-                )
-                {
-                    continue;
-                }
-
-
-                $gpio =
-                    (int) $ledData['gpio'];
-
+                $actuatorType = 'generic';
 
                 if (
-                    !$this->isValidGpio($gpio)
+                    isset($actuatorData['type']) &&
+                    is_string($actuatorData['type']) &&
+                    trim($actuatorData['type']) !== ''
                 )
                 {
-                    echo "[WS] LED rechazado: ";
-                    echo "GPIO invalido\n";
-
-                    continue;
-                }
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | NOMBRE DEL LED
-                |--------------------------------------------------------------------------
-                */
-
-                $ledName =
-                    'LED ' . $ledId;
-
-
-                if (
-                    isset($ledData['name']) &&
-                    is_string($ledData['name']) &&
-                    trim($ledData['name']) !== ''
-                )
-                {
-                    $ledName =
-                        trim($ledData['name']);
+                    $actuatorType =
+                        trim($actuatorData['type']);
                 }
 
 
@@ -466,46 +455,35 @@ class IoTWebSocketServer implements MessageComponentInterface
                 |--------------------------------------------------------------------------
                 | CONSERVAR ESTADO ANTERIOR
                 |--------------------------------------------------------------------------
-                |
-                | Si el ESP32 se reconecta, no queremos
-                | que el servidor cambie arbitrariamente
-                | el estado almacenado.
-                |
-                |--------------------------------------------------------------------------
                 */
 
                 $previousState = false;
 
-
                 if (
+                    isset($this->devices[$deviceId]) &&
                     isset(
                         $this->devices[$deviceId]
-                    ) &&
-                    isset(
-                        $this->devices[$deviceId]['leds'][$ledId]
+                            ['actuators'][$actuatorId]
                     )
                 )
                 {
                     $previousState =
                         (bool)
                         $this->devices[$deviceId]
-                            ['leds'][$ledId]
+                            ['actuators'][$actuatorId]
                             ['state'];
                 }
 
 
-                /*
-                |--------------------------------------------------------------------------
-                | GUARDAR LED
-                |--------------------------------------------------------------------------
-                */
-
-                $leds[$ledId] = [
+                $actuators[$actuatorId] = [
                     'id' =>
-                        $ledId,
+                        $actuatorId,
 
                     'name' =>
-                        $ledName,
+                        $actuatorName,
+
+                    'type' =>
+                        $actuatorType,
 
                     'gpio' =>
                         $gpio,
@@ -519,23 +497,56 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
+        | CONSERVAR SENSORES
+        |--------------------------------------------------------------------------
+        */
+
+        $sensors = [];
+
+        if (
+            isset($this->devices[$deviceId]) &&
+            isset($this->devices[$deviceId]['sensors']) &&
+            is_array($this->devices[$deviceId]['sensors'])
+        )
+        {
+            $sensors =
+                $this->devices[$deviceId]['sensors'];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LAST SEEN ANTERIOR
+        |--------------------------------------------------------------------------
+        */
+
+        $lastSeen = time();
+
+        if (
+            isset($this->devices[$deviceId]) &&
+            isset($this->devices[$deviceId]['lastSeen'])
+        )
+        {
+            $lastSeen =
+                (int) $this->devices[$deviceId]['lastSeen'];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
         | DEVICE EXISTENTE
         |--------------------------------------------------------------------------
         */
 
         if (
-            isset(
-                $this->devices[$deviceId]
-            )
+            isset($this->devices[$deviceId])
         )
         {
-            echo "[WS] Device #{$deviceId}";
-            echo " reconectando\n";
+            echo "[WS] Device #{$deviceId} reconectando\n";
         }
         else
         {
-            echo "[WS] Device #{$deviceId}";
-            echo " nuevo\n";
+            echo "[WS] Device #{$deviceId} nuevo\n";
         }
 
 
@@ -558,17 +569,23 @@ class IoTWebSocketServer implements MessageComponentInterface
             'online' =>
                 true,
 
+            'lastSeen' =>
+                time(),
+
             'connection' =>
                 $conn,
 
-            'leds' =>
-                $leds,
+            'actuators' =>
+                $actuators,
+
+            'sensors' =>
+                $sensors,
         ];
 
 
         /*
         |--------------------------------------------------------------------------
-        | LOG DEL DEVICE
+        | LOG
         |--------------------------------------------------------------------------
         */
 
@@ -577,50 +594,40 @@ class IoTWebSocketServer implements MessageComponentInterface
         echo "[WS] DEVICE REGISTRADO\n";
         echo "----------------------------------------------\n";
 
-        echo "[WS] Device ID: ";
-        echo $deviceId;
-        echo "\n";
-
-        echo "[WS] Nombre: ";
-        echo $name;
-        echo "\n";
-
+        echo "[WS] Device ID: {$deviceId}\n";
+        echo "[WS] Nombre: {$name}\n";
         echo "[WS] Online: SI\n";
-
-        echo "[WS] LEDs: ";
-        echo count($leds);
+        echo "[WS] LastSeen: ";
+        echo $this->devices[$deviceId]['lastSeen'];
         echo "\n";
 
+        echo "[WS] Actuadores: ";
+        echo count($actuators);
+        echo "\n";
 
         foreach (
-            $leds as $ledId => $led
+            $actuators as $actuatorId => $actuator
         )
         {
-            echo "[WS]   LED #";
-            echo $ledId;
-
+            echo "[WS]   ACTUATOR #{$actuatorId}";
+            echo " | {$actuator['name']}";
+            echo " | tipo {$actuator['type']}";
+            echo " | GPIO {$actuator['gpio']}";
             echo " | ";
-            echo $led['name'];
-
-            echo " | GPIO ";
-            echo $led['gpio'];
-
-            echo " | ";
-
-            echo $led['state']
-                ? "ON"
-                : "OFF";
-
+            echo $actuator['state'] ? "ON" : "OFF";
             echo "\n";
         }
 
+        echo "[WS] Sensores: ";
+        echo count($sensors);
+        echo "\n";
 
         echo "==============================================\n";
 
 
         /*
         |--------------------------------------------------------------------------
-        | CONFIRMACIÓN AL ESP32
+        | CONFIRMACIÓN
         |--------------------------------------------------------------------------
         */
 
@@ -634,7 +641,6 @@ class IoTWebSocketServer implements MessageComponentInterface
             'device_id' =>
                 $deviceId,
         ];
-
 
         try
         {
@@ -655,14 +661,583 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | ACTUALIZAR VUE
+        | ACTUALIZAR DASHBOARD
         |--------------------------------------------------------------------------
         */
 
         $this->broadcastStatus();
 
-
         return true;
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | HEARTBEAT
+    |--------------------------------------------------------------------------
+    |
+    | Recibe:
+    |
+    | {
+    |     "type": "heartbeat",
+    |     "device_id": 1
+    | }
+    |
+    |--------------------------------------------------------------------------
+    */
+
+    protected function handleHeartbeat(
+        ConnectionInterface $from,
+        array $data
+    )
+    {
+        if (!isset($data['device_id']))
+        {
+            echo "[WS] heartbeat rechazado: device_id faltante\n";
+            return;
+        }
+
+        $deviceId = (int) $data['device_id'];
+
+        if ($deviceId <= 0)
+        {
+            echo "[WS] heartbeat rechazado: device_id invalido\n";
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | DEVICE NO REGISTRADO
+        |--------------------------------------------------------------------------
+        */
+
+        if (!isset($this->devices[$deviceId]))
+        {
+            echo "[WS] Heartbeat recibido de Device #{$deviceId}";
+            echo " pero todavía no está registrado\n";
+
+            /*
+            |--------------------------------------------------------------------------
+            | RESPUESTA AL CLIENTE
+            |--------------------------------------------------------------------------
+            */
+
+            try
+            {
+                $from->send(
+                    json_encode(
+                        [
+                            'type' =>
+                                'heartbeat_ack',
+
+                            'status' =>
+                                'not_registered',
+
+                            'device_id' =>
+                                $deviceId,
+                        ],
+                        JSON_UNESCAPED_UNICODE
+                    )
+                );
+            }
+            catch (\Throwable $e)
+            {
+                echo "[WS] Error enviando heartbeat_ack: ";
+                echo $e->getMessage();
+                echo "\n";
+            }
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDAR CONEXIÓN
+        |--------------------------------------------------------------------------
+        |
+        | Esto evita que una conexión vieja actualice el estado de una
+        | conexión nueva del mismo dispositivo.
+        |
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($this->devices[$deviceId]['connection']) &&
+            $this->devices[$deviceId]['connection'] !== $from
+        )
+        {
+            echo "[WS] Heartbeat ignorado: conexión antigua";
+            echo " para Device #{$deviceId}\n";
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUALIZAR ONLINE + LAST SEEN
+        |--------------------------------------------------------------------------
+        */
+
+        $this->devices[$deviceId]['online'] = true;
+        $this->devices[$deviceId]['registered'] = true;
+        $this->devices[$deviceId]['connection'] = $from;
+        $this->devices[$deviceId]['lastSeen'] = time();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LOG
+        |--------------------------------------------------------------------------
+        */
+
+        echo "[WS] HEARTBEAT <- Device #{$deviceId}";
+        echo " | lastSeen=";
+        echo $this->devices[$deviceId]['lastSeen'];
+        echo "\n";
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACK
+        |--------------------------------------------------------------------------
+        */
+
+        $response = [
+            'type' =>
+                'heartbeat_ack',
+
+            'status' =>
+                'ok',
+
+            'device_id' =>
+                $deviceId,
+
+            'lastSeen' =>
+                $this->devices[$deviceId]['lastSeen'],
+        ];
+
+        try
+        {
+            $from->send(
+                json_encode(
+                    $response,
+                    JSON_UNESCAPED_UNICODE
+                )
+            );
+        }
+        catch (\Throwable $e)
+        {
+            echo "[WS] Error enviando heartbeat_ack: ";
+            echo $e->getMessage();
+            echo "\n";
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUALIZAR DASHBOARD
+        |--------------------------------------------------------------------------
+        */
+
+        $this->broadcastStatus();
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | DEVICE STATE
+    |--------------------------------------------------------------------------
+    */
+
+    protected function handleDeviceState(
+        ConnectionInterface $from,
+        array $data
+    )
+    {
+        if (!isset($data['device_id']))
+        {
+            echo "[WS] device_state rechazado: device_id faltante\n";
+            return;
+        }
+
+        $deviceId = (int) $data['device_id'];
+
+        if ($deviceId <= 0)
+        {
+            echo "[WS] device_state rechazado: device_id invalido\n";
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | DEVICE NO REGISTRADO
+        |--------------------------------------------------------------------------
+        */
+
+        if (!isset($this->devices[$deviceId]))
+        {
+            echo "[WS] device_state recibido de Device #{$deviceId}";
+            echo " pero todavía no está registrado\n";
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUALIZAR CONEXIÓN
+        |--------------------------------------------------------------------------
+        */
+
+        $this->devices[$deviceId]['online'] = true;
+        $this->devices[$deviceId]['registered'] = true;
+        $this->devices[$deviceId]['connection'] = $from;
+        $this->devices[$deviceId]['lastSeen'] = time();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUADORES
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($data['actuators']) &&
+            is_array($data['actuators'])
+        )
+        {
+            foreach (
+                $data['actuators'] as $actuatorData
+            )
+            {
+                if (!is_array($actuatorData))
+                {
+                    continue;
+                }
+
+                if (!isset($actuatorData['id']))
+                {
+                    continue;
+                }
+
+                $actuatorId =
+                    (int) $actuatorData['id'];
+
+                if ($actuatorId <= 0)
+                {
+                    continue;
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | EL ACTUADOR DEBE EXISTIR
+                |--------------------------------------------------------------------------
+                */
+
+                if (
+                    !isset(
+                        $this->devices[$deviceId]
+                            ['actuators'][$actuatorId]
+                    )
+                )
+                {
+                    echo "[WS] Actuator #{$actuatorId}";
+                    echo " no existe en Device #{$deviceId}";
+                    echo " - ignorado\n";
+
+                    continue;
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | ESTADO
+                |--------------------------------------------------------------------------
+                */
+
+                if (isset($actuatorData['state']))
+                {
+                    $state =
+                        strtoupper(
+                            trim(
+                                (string)
+                                $actuatorData['state']
+                            )
+                        );
+
+                    if ($state === 'ON')
+                    {
+                        $this->devices[$deviceId]
+                            ['actuators'][$actuatorId]
+                            ['state'] = true;
+                    }
+                    elseif ($state === 'OFF')
+                    {
+                        $this->devices[$deviceId]
+                            ['actuators'][$actuatorId]
+                            ['state'] = false;
+                    }
+                }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | GPIO
+                |--------------------------------------------------------------------------
+                */
+
+                if (isset($actuatorData['gpio']))
+                {
+                    $gpio =
+                        (int) $actuatorData['gpio'];
+
+                    if ($this->isValidGpio($gpio))
+                    {
+                        $this->devices[$deviceId]
+                            ['actuators'][$actuatorId]
+                            ['gpio'] = $gpio;
+                    }
+                }
+            }
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SENSOR DENTRO DE DEVICE STATE
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($data['sensor']) &&
+            is_array($data['sensor'])
+        )
+        {
+            $sensor = $data['sensor'];
+
+            if (isset($sensor['id']))
+            {
+                $sensorId = (int) $sensor['id'];
+
+                if ($sensorId > 0)
+                {
+                    $this->devices[$deviceId]
+                        ['sensors'][$sensorId] = $sensor;
+                }
+            }
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LOG
+        |--------------------------------------------------------------------------
+        */
+
+        echo "\n";
+        echo "----------------------------------------------\n";
+        echo "[WS] DEVICE STATE\n";
+        echo "[WS] Device: {$deviceId}\n";
+        echo "[WS] LastSeen: ";
+        echo $this->devices[$deviceId]['lastSeen'];
+        echo "\n";
+
+        if (isset($data['confirmed']))
+        {
+            echo "[WS] Confirmado: ";
+            echo $data['confirmed'] ? "SI" : "NO";
+            echo "\n";
+        }
+
+        if (
+            isset($data['actuators']) &&
+            is_array($data['actuators'])
+        )
+        {
+            echo "[WS] Actuadores recibidos: ";
+            echo count($data['actuators']);
+            echo "\n";
+        }
+
+        if (
+            isset($data['sensor']) &&
+            is_array($data['sensor'])
+        )
+        {
+            echo "[WS] Sensor recibido\n";
+
+            if (isset($data['sensor']['temperature']))
+            {
+                echo "[WS] Temperatura: ";
+                echo $data['sensor']['temperature'];
+                echo " °C\n";
+            }
+
+            if (isset($data['sensor']['humidity']))
+            {
+                echo "[WS] Humedad: ";
+                echo $data['sensor']['humidity'];
+                echo " %\n";
+            }
+        }
+
+        echo "----------------------------------------------\n";
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUALIZAR VUE
+        |--------------------------------------------------------------------------
+        */
+
+        $this->broadcastStatus();
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | SENSOR STATE
+    |--------------------------------------------------------------------------
+    */
+
+    protected function handleSensorState(
+        ConnectionInterface $from,
+        array $data
+    )
+    {
+        if (!isset($data['device_id']))
+        {
+            echo "[WS] sensor_state rechazado: device_id faltante\n";
+            return;
+        }
+
+        $deviceId = (int) $data['device_id'];
+
+        if ($deviceId <= 0)
+        {
+            echo "[WS] sensor_state rechazado: device_id invalido\n";
+            return;
+        }
+
+        if (!isset($this->devices[$deviceId]))
+        {
+            echo "[WS] sensor_state recibido de Device #{$deviceId}";
+            echo " pero todavía no está registrado\n";
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUALIZAR CONEXIÓN
+        |--------------------------------------------------------------------------
+        */
+
+        $this->devices[$deviceId]['online'] = true;
+        $this->devices[$deviceId]['registered'] = true;
+        $this->devices[$deviceId]['connection'] = $from;
+        $this->devices[$deviceId]['lastSeen'] = time();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SENSOR
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            !isset($data['sensor']) ||
+            !is_array($data['sensor'])
+        )
+        {
+            echo "[WS] sensor_state sin objeto sensor\n";
+            return;
+        }
+
+        $sensor = $data['sensor'];
+
+        if (!isset($sensor['id']))
+        {
+            echo "[WS] sensor_state rechazado: sensor.id faltante\n";
+            return;
+        }
+
+        $sensorId = (int) $sensor['id'];
+
+        if ($sensorId <= 0)
+        {
+            echo "[WS] sensor_state rechazado: sensor.id invalido\n";
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | GUARDAR SENSOR
+        |--------------------------------------------------------------------------
+        */
+
+        $this->devices[$deviceId]
+            ['sensors'][$sensorId] = $sensor;
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LOG
+        |--------------------------------------------------------------------------
+        */
+
+        echo "\n";
+        echo "----------------------------------------------\n";
+        echo "[WS] SENSOR STATE\n";
+        echo "[WS] Device: {$deviceId}\n";
+        echo "[WS] Sensor: {$sensorId}\n";
+        echo "[WS] LastSeen: ";
+        echo $this->devices[$deviceId]['lastSeen'];
+        echo "\n";
+
+        if (isset($sensor['name']))
+        {
+            echo "[WS] Nombre: ";
+            echo $sensor['name'];
+            echo "\n";
+        }
+
+        if (isset($sensor['type']))
+        {
+            echo "[WS] Tipo: ";
+            echo $sensor['type'];
+            echo "\n";
+        }
+
+        if (isset($sensor['temperature']))
+        {
+            echo "[WS] Temperatura: ";
+            echo $sensor['temperature'];
+            echo " °C\n";
+        }
+
+        if (isset($sensor['humidity']))
+        {
+            echo "[WS] Humedad: ";
+            echo $sensor['humidity'];
+            echo " %\n";
+        }
+
+        echo "----------------------------------------------\n";
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ACTUALIZAR VUE
+        |--------------------------------------------------------------------------
+        */
+
+        $this->broadcastStatus();
     }
 
 
@@ -676,10 +1251,7 @@ class IoTWebSocketServer implements MessageComponentInterface
         ConnectionInterface $conn
     )
     {
-        $this->clients->attach(
-            $conn
-        );
-
+        $this->clients->attach($conn);
 
         echo "\n";
         echo "==============================================\n";
@@ -699,13 +1271,7 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | ENVIAR ESTADO ACTUAL
-        |--------------------------------------------------------------------------
-        |
-        | Si Vue se conecta después de que un ESP32
-        | ya está conectado, recibirá inmediatamente
-        | el estado actual.
-        |
+        | ESTADO INICIAL
         |--------------------------------------------------------------------------
         */
 
@@ -763,13 +1329,9 @@ class IoTWebSocketServer implements MessageComponentInterface
                 true
             );
 
-
-        if (
-            !is_array($data)
-        )
+        if (!is_array($data))
         {
             echo "[WS] JSON INVALIDO\n";
-
             return;
         }
 
@@ -782,11 +1344,75 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         if (
             isset($data['command']) &&
-            $data['command'] ===
-                'register_device'
+            $data['command'] === 'register_device'
         )
         {
             $this->registerDevice(
+                $from,
+                $data
+            );
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | HEARTBEAT
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANTE:
+        | Debe revisarse ANTES de exigir command.
+        |
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($data['type']) &&
+            $data['type'] === 'heartbeat'
+        )
+        {
+            $this->handleHeartbeat(
+                $from,
+                $data
+            );
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | DEVICE STATE
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($data['type']) &&
+            $data['type'] === 'device_state'
+        )
+        {
+            $this->handleDeviceState(
+                $from,
+                $data
+            );
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SENSOR STATE
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($data['type']) &&
+            $data['type'] === 'sensor_state'
+        )
+        {
+            $this->handleSensorState(
                 $from,
                 $data
             );
@@ -801,19 +1427,21 @@ class IoTWebSocketServer implements MessageComponentInterface
         |--------------------------------------------------------------------------
         */
 
-        if (
-            !isset($data['command'])
-        )
+        if (!isset($data['command']))
         {
-            echo "[WS] Comando no especificado\n";
-
+            echo "[WS] Mensaje sin command/type reconocido\n";
             return;
         }
 
 
+        /*
+        |--------------------------------------------------------------------------
+        | COMMAND
+        |--------------------------------------------------------------------------
+        */
+
         $command =
             $data['command'];
-
 
         echo "[WS] Command: ";
         echo $command;
@@ -822,16 +1450,15 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | LED TOGGLE
+        | ACTUATOR TOGGLE
         |--------------------------------------------------------------------------
         */
 
         if (
-            $command ===
-                'led_toggle'
+            $command === 'actuator_toggle'
         )
         {
-            $this->toggleLed(
+            $this->toggleActuator(
                 $from,
                 $data
             );
@@ -842,16 +1469,15 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | LED ON
+        | ACTUATOR ON
         |--------------------------------------------------------------------------
         */
 
         if (
-            $command ===
-                'led_on'
+            $command === 'actuator_on'
         )
         {
-            $this->setLedState(
+            $this->setActuatorState(
                 $from,
                 $data,
                 true
@@ -863,16 +1489,15 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | LED OFF
+        | ACTUATOR OFF
         |--------------------------------------------------------------------------
         */
 
         if (
-            $command ===
-                'led_off'
+            $command === 'actuator_off'
         )
         {
-            $this->setLedState(
+            $this->setActuatorState(
                 $from,
                 $data,
                 false
@@ -884,7 +1509,57 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | COMANDO DESCONOCIDO
+        | COMPATIBILIDAD LEGACY
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $command === 'led_toggle'
+        )
+        {
+            $this->toggleActuator(
+                $from,
+                $data,
+                true
+            );
+
+            return;
+        }
+
+
+        if (
+            $command === 'led_on'
+        )
+        {
+            $this->setActuatorState(
+                $from,
+                $data,
+                true,
+                true
+            );
+
+            return;
+        }
+
+
+        if (
+            $command === 'led_off'
+        )
+        {
+            $this->setActuatorState(
+                $from,
+                $data,
+                false,
+                true
+            );
+
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | DESCONOCIDO
         |--------------------------------------------------------------------------
         */
 
@@ -896,43 +1571,51 @@ class IoTWebSocketServer implements MessageComponentInterface
 
     /*
     |--------------------------------------------------------------------------
-    | TOGGLE LED
+    | TOGGLE ACTUATOR
     |--------------------------------------------------------------------------
     */
 
-    protected function toggleLed(
+    protected function toggleActuator(
         ConnectionInterface $from,
-        array $data
+        array $data,
+        bool $legacy = false
     )
     {
-        /*
-        |--------------------------------------------------------------------------
-        | VALIDAR DEVICE
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            !isset($data['device_id'])
-        )
+        if (!isset($data['device_id']))
         {
             echo "[WS] device_id faltante\n";
-
             return;
         }
 
 
         /*
         |--------------------------------------------------------------------------
-        | VALIDAR LED
+        | ACTUATOR ID
         |--------------------------------------------------------------------------
         */
 
-        if (
-            !isset($data['led_id'])
+        $actuatorId = null;
+
+        if (isset($data['actuator_id']))
+        {
+            $actuatorId =
+                (int) $data['actuator_id'];
+        }
+        elseif (
+            $legacy &&
+            isset($data['led_id'])
         )
         {
-            echo "[WS] led_id faltante\n";
+            $actuatorId =
+                (int) $data['led_id'];
+        }
 
+        if (
+            $actuatorId === null ||
+            $actuatorId <= 0
+        )
+        {
+            echo "[WS] actuator_id faltante\n";
             return;
         }
 
@@ -941,32 +1624,48 @@ class IoTWebSocketServer implements MessageComponentInterface
             (int) $data['device_id'];
 
 
-        $ledId =
-            (int) $data['led_id'];
-
-
         /*
         |--------------------------------------------------------------------------
-        | DEVICE EXISTE
+        | DEVICE
         |--------------------------------------------------------------------------
         */
 
-        if (
-            !isset(
-                $this->devices[$deviceId]
-            )
-        )
+        if (!isset($this->devices[$deviceId]))
         {
-            echo "[WS] Device #{$deviceId}";
-            echo " no existe\n";
-
+            echo "[WS] Device #{$deviceId} no existe\n";
             return;
         }
 
 
         /*
+|--------------------------------------------------------------------------
+| VALIDAR CONEXIÓN DEL DEVICE
+|--------------------------------------------------------------------------
+|
+| El comando puede venir desde Vue.
+| $from representa al cliente que envió
+| el comando, no necesariamente al ESP32.
+|
+| La conexión del ESP32 se obtiene mediante
+| getDeviceConnection().
+|
+*/
+
+if (
+    !isset(
+        $this->devices[$deviceId]['connection']
+    )
+)
+{
+    echo "[WS] Device #{$deviceId} no tiene conexión\n";
+    return;
+}
+
+
+
+        /*
         |--------------------------------------------------------------------------
-        | DEVICE ONLINE
+        | ONLINE
         |--------------------------------------------------------------------------
         */
 
@@ -974,31 +1673,26 @@ class IoTWebSocketServer implements MessageComponentInterface
             !$this->devices[$deviceId]['online']
         )
         {
-            echo "[WS] Device #{$deviceId}";
-            echo " esta offline\n";
-
+            echo "[WS] Device #{$deviceId} esta offline\n";
             return;
         }
 
 
         /*
         |--------------------------------------------------------------------------
-        | LED EXISTE
+        | ACTUATOR
         |--------------------------------------------------------------------------
         */
 
         if (
             !isset(
                 $this->devices[$deviceId]
-                    ['leds'][$ledId]
+                    ['actuators'][$actuatorId]
             )
         )
         {
-            echo "[WS] LED #{$ledId}";
-            echo " no existe en Device #";
-            echo $deviceId;
-            echo "\n";
-
+            echo "[WS] Actuator #{$actuatorId}";
+            echo " no existe en Device #{$deviceId}\n";
             return;
         }
 
@@ -1012,52 +1706,35 @@ class IoTWebSocketServer implements MessageComponentInterface
         $currentState =
             (bool)
             $this->devices[$deviceId]
-                ['leds'][$ledId]
+                ['actuators'][$actuatorId]
                 ['state'];
-
 
         $newState =
             !$currentState;
 
 
-        /*
-        |--------------------------------------------------------------------------
-        | GUARDAR ESTADO
-        |--------------------------------------------------------------------------
-        */
-
         $this->devices[$deviceId]
-            ['leds'][$ledId]
+            ['actuators'][$actuatorId]
             ['state'] =
                 $newState;
 
 
-        $led =
+        $actuator =
             $this->devices[$deviceId]
-                ['leds'][$ledId];
+                ['actuators'][$actuatorId];
 
 
         echo "\n";
         echo "----------------------------------------------\n";
-        echo "[WS] LED TOGGLE\n";
-        echo "[WS] Device: ";
-        echo $deviceId;
-        echo "\n";
-
-        echo "[WS] LED: ";
-        echo $ledId;
-        echo "\n";
-
-        echo "[WS] GPIO: ";
-        echo $led['gpio'];
-        echo "\n";
-
+        echo "[WS] ACTUATOR TOGGLE\n";
+        echo "[WS] Device: {$deviceId}\n";
+        echo "[WS] Actuator: {$actuatorId}\n";
+        echo "[WS] Nombre: {$actuator['name']}\n";
+        echo "[WS] Tipo: {$actuator['type']}\n";
+        echo "[WS] GPIO: {$actuator['gpio']}\n";
         echo "[WS] Nuevo estado: ";
-        echo $newState
-            ? "ON"
-            : "OFF";
+        echo $newState ? "ON" : "OFF";
         echo "\n";
-
         echo "----------------------------------------------\n";
 
 
@@ -1072,26 +1749,23 @@ class IoTWebSocketServer implements MessageComponentInterface
                 $deviceId
             );
 
-
-        if (
-            $deviceConnection !== null
-        )
+        if ($deviceConnection !== null)
         {
             $commandMessage = [
                 'type' =>
                     'command',
 
                 'command' =>
-                    'led_set',
+                    'actuator_set',
 
                 'device_id' =>
                     $deviceId,
 
-                'led_id' =>
-                    $ledId,
+                'actuator_id' =>
+                    $actuatorId,
 
                 'gpio' =>
-                    $led['gpio'],
+                    $actuator['gpio'],
 
                 'state' =>
                     $newState
@@ -1099,18 +1773,15 @@ class IoTWebSocketServer implements MessageComponentInterface
                         : 'OFF',
             ];
 
-
             $jsonCommand =
                 json_encode(
                     $commandMessage,
                     JSON_UNESCAPED_UNICODE
                 );
 
-
             echo "[WS] TX -> ESP32: ";
             echo $jsonCommand;
             echo "\n";
-
 
             try
             {
@@ -1129,7 +1800,7 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | ACTUALIZAR TODOS LOS CLIENTES
+        | ACTUALIZAR DASHBOARD
         |--------------------------------------------------------------------------
         */
 
@@ -1139,29 +1810,46 @@ class IoTWebSocketServer implements MessageComponentInterface
 
     /*
     |--------------------------------------------------------------------------
-    | SET LED STATE
+    | SET ACTUATOR STATE
     |--------------------------------------------------------------------------
     */
 
-    protected function setLedState(
+    protected function setActuatorState(
         ConnectionInterface $from,
         array $data,
-        bool $state
+        bool $state,
+        bool $legacy = false
     )
     {
-        /*
-        |--------------------------------------------------------------------------
-        | VALIDACIÓN
-        |--------------------------------------------------------------------------
-        */
+        if (!isset($data['device_id']))
+        {
+            echo "[WS] device_id faltante\n";
+            return;
+        }
 
-        if (
-            !isset($data['device_id']) ||
-            !isset($data['led_id'])
+
+        $actuatorId = null;
+
+        if (isset($data['actuator_id']))
+        {
+            $actuatorId =
+                (int) $data['actuator_id'];
+        }
+        elseif (
+            $legacy &&
+            isset($data['led_id'])
         )
         {
-            echo "[WS] device_id o led_id faltante\n";
+            $actuatorId =
+                (int) $data['led_id'];
+        }
 
+        if (
+            $actuatorId === null ||
+            $actuatorId <= 0
+        )
+        {
+            echo "[WS] actuator_id faltante\n";
             return;
         }
 
@@ -1170,25 +1858,32 @@ class IoTWebSocketServer implements MessageComponentInterface
             (int) $data['device_id'];
 
 
-        $ledId =
-            (int) $data['led_id'];
-
-
         /*
         |--------------------------------------------------------------------------
         | DEVICE
         |--------------------------------------------------------------------------
         */
 
+        if (!isset($this->devices[$deviceId]))
+        {
+            echo "[WS] Device #{$deviceId} no existe\n";
+            return;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDAR CONEXIÓN
+        |--------------------------------------------------------------------------
+        */
+
         if (
-            !isset(
-                $this->devices[$deviceId]
-            )
+            isset($this->devices[$deviceId]['connection']) &&
+            $this->devices[$deviceId]['connection'] !== $from
         )
         {
-            echo "[WS] Device #{$deviceId}";
-            echo " no existe\n";
-
+            echo "[WS] Comando rechazado: conexión no pertenece";
+            echo " al Device #{$deviceId}\n";
             return;
         }
 
@@ -1203,53 +1898,49 @@ class IoTWebSocketServer implements MessageComponentInterface
             !$this->devices[$deviceId]['online']
         )
         {
-            echo "[WS] Device #{$deviceId}";
-            echo " esta offline\n";
-
+            echo "[WS] Device #{$deviceId} esta offline\n";
             return;
         }
 
 
         /*
         |--------------------------------------------------------------------------
-        | LED
+        | ACTUATOR
         |--------------------------------------------------------------------------
         */
 
         if (
             !isset(
                 $this->devices[$deviceId]
-                    ['leds'][$ledId]
+                    ['actuators'][$actuatorId]
             )
         )
         {
-            echo "[WS] LED #{$ledId}";
-            echo " no existe\n";
-
+            echo "[WS] Actuator #{$actuatorId} no existe\n";
             return;
         }
 
 
         /*
         |--------------------------------------------------------------------------
-        | GUARDAR
+        | GUARDAR ESTADO
         |--------------------------------------------------------------------------
         */
 
         $this->devices[$deviceId]
-            ['leds'][$ledId]
+            ['actuators'][$actuatorId]
             ['state'] =
                 $state;
 
 
-        $led =
+        $actuator =
             $this->devices[$deviceId]
-                ['leds'][$ledId];
+                ['actuators'][$actuatorId];
 
 
         /*
         |--------------------------------------------------------------------------
-        | COMANDO
+        | COMANDO PARA ESP32
         |--------------------------------------------------------------------------
         */
 
@@ -1258,16 +1949,16 @@ class IoTWebSocketServer implements MessageComponentInterface
                 'command',
 
             'command' =>
-                'led_set',
+                'actuator_set',
 
             'device_id' =>
                 $deviceId,
 
-            'led_id' =>
-                $ledId,
+            'actuator_id' =>
+                $actuatorId,
 
             'gpio' =>
-                $led['gpio'],
+                $actuator['gpio'],
 
             'state' =>
                 $state
@@ -1294,15 +1985,11 @@ class IoTWebSocketServer implements MessageComponentInterface
                 $deviceId
             );
 
-
-        if (
-            $deviceConnection !== null
-        )
+        if ($deviceConnection !== null)
         {
             echo "[WS] TX -> ESP32: ";
             echo $jsonCommand;
             echo "\n";
-
 
             try
             {
@@ -1321,7 +2008,7 @@ class IoTWebSocketServer implements MessageComponentInterface
 
         /*
         |--------------------------------------------------------------------------
-        | ACTUALIZAR VUE
+        | ACTUALIZAR DASHBOARD
         |--------------------------------------------------------------------------
         */
 
@@ -1367,35 +2054,35 @@ class IoTWebSocketServer implements MessageComponentInterface
         */
 
         foreach (
-            $this->devices
-            as $deviceId => &$device
+            $this->devices as $deviceId => &$device
         )
         {
+            /*
+            |--------------------------------------------------------------------------
+            | IMPORTANTE
+            |--------------------------------------------------------------------------
+            |
+            | Solo marcar offline si ESTA conexión sigue siendo la conexión
+            | actual del dispositivo.
+            |
+            | Si el ESP32 se reconectó y tiene otra conexión, no debemos
+            | marcarlo offline por el cierre de la conexión anterior.
+            |
+            |--------------------------------------------------------------------------
+            */
+
             if (
                 isset($device['connection']) &&
                 $device['connection'] === $conn
             )
             {
-                /*
-                |--------------------------------------------------------------------------
-                | OFFLINE
-                |--------------------------------------------------------------------------
-                */
+                $device['online'] = false;
+                $device['connection'] = null;
 
-                $device['online'] =
-                    false;
-
-
-                $device['connection'] =
-                    null;
-
-
-                echo "[WS] Device #";
-                echo $deviceId;
+                echo "[WS] Device #{$deviceId}";
                 echo " marcado OFFLINE\n";
             }
         }
-
 
         unset($device);
 
@@ -1404,13 +2091,12 @@ class IoTWebSocketServer implements MessageComponentInterface
         echo $this->clients->count();
         echo "\n";
 
-
         echo "==============================================\n";
 
 
         /*
         |--------------------------------------------------------------------------
-        | AVISAR A VUE
+        | AVISAR AL DASHBOARD
         |--------------------------------------------------------------------------
         */
 
@@ -1434,7 +2120,6 @@ class IoTWebSocketServer implements MessageComponentInterface
         echo "[WS] ERROR WEBSOCKET\n";
         echo "[WS] {$e->getMessage()}\n";
         echo "[WS] ======================================\n";
-
 
         $conn->close();
     }
