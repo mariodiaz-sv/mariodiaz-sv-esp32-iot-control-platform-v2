@@ -1070,25 +1070,15 @@ function actuatorButtonLabel(
   device: Device,
   actuator: Actuator
 ) {
-  if (
-    deviceIsOffline(device)
-  ) {
+  if (deviceIsOffline(device)) {
     return 'BLOQUEADO'
-  }
-
-  if (
-    isActuatorChanging(
-      device.id,
-      actuator.id
-    )
-  ) {
-    return 'CAMBIANDO...'
   }
 
   return actuator.state
     ? 'ON'
     : 'OFF'
 }
+
 
 /* =====================================================
    LIFECYCLE
