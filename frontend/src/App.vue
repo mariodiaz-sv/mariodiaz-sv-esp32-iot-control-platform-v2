@@ -64,6 +64,33 @@ interface WebSocketStatusMessage {
   type: 'status'
   devices: WebSocketDevice[]
 }
+interface WeatherForecast {
+  time: string
+  temperature: number
+  condition: string
+  icon: string
+  precipitationProbability: number
+}
+
+interface WeatherData {
+  city: string
+  country: string
+  date: string
+  time: string
+  temperature: number
+  feelsLike: number
+  humidity: number
+  uvIndex: number
+  windSpeed: number
+  windDirection: string
+  precipitation: number
+  condition: string
+  icon: string
+  warningTitle: string
+  warningDescription: string
+  forecast: WeatherForecast[]
+}
+
 
 /* =====================================================
    NAVIGATION
@@ -71,6 +98,71 @@ interface WebSocketStatusMessage {
 
 const activeSection = ref('dashboard')
 const mobileMenuOpen = ref(false)
+
+
+const weather = ref<WeatherData>({
+  city: 'Santa Tecla',
+  country: 'El Salvador',
+
+  date: '12 de septiembre',
+  time: '10:00',
+
+  temperature: 27,
+  feelsLike: 28,
+
+  humidity: 72,
+  uvIndex: 6,
+
+  windSpeed: 12,
+  windDirection: '↗',
+
+  precipitation: 0,
+
+  condition: 'Parcialmente nublado',
+  icon: '⛅',
+
+  warningTitle: 'Sin alertas',
+  warningDescription:
+    'Las condiciones actuales no requieren advertencias especiales.',
+
+  forecast: [
+    {
+      time: '10:00',
+      temperature: 27,
+      condition: 'Parcialmente nublado',
+      icon: '⛅',
+      precipitationProbability: 10,
+    },
+    {
+      time: '11:00',
+      temperature: 28,
+      condition: 'Soleado',
+      icon: '☀️',
+      precipitationProbability: 5,
+    },
+    {
+      time: '12:00',
+      temperature: 29,
+      condition: 'Soleado',
+      icon: '☀️',
+      precipitationProbability: 8,
+    },
+    {
+      time: '13:00',
+      temperature: 29,
+      condition: 'Lluvia ligera',
+      icon: '🌦️',
+      precipitationProbability: 35,
+    },
+    {
+      time: '14:00',
+      temperature: 27,
+      condition: 'Lluvia',
+      icon: '🌧️',
+      precipitationProbability: 60,
+    },
+  ],
+})
 
 /* =====================================================
    THEME
@@ -114,7 +206,14 @@ const temperatureHistory = ref<
 
 const MAX_TEMPERATURE_POINTS = 30
 
-const totalSensors = ref(0)
+const totalSensors = computed(() =>
+  devices.value.reduce(
+    (total, device) =>
+      total + device.sensors.length,
+    0
+  )
+)
+/* NORMALIZAR TEMPERATURA */
 /* =====================================================
    TEMPERATURA - DATOS PARA LA TARJETA Y GRÁFICO
 ===================================================== */
@@ -330,12 +429,14 @@ type DashboardPanel =
   | 'overview'
   | 'devices'
   | 'activity'
+  | 'weather'
 
 interface DashboardPreferences {
   stats: boolean
   overview: boolean
   devices: boolean
   activity: boolean
+  weather: boolean
 }
 
 const defaultDashboardPreferences: DashboardPreferences = {
@@ -343,6 +444,7 @@ const defaultDashboardPreferences: DashboardPreferences = {
   overview: true,
   devices: true,
   activity: true,
+  weather: true,
 }
 
 function loadDashboardPreferences(): DashboardPreferences {
@@ -1458,12 +1560,14 @@ onUnmounted(() => {
         <!-- DASHBOARD -->
 
         <section
-          v-if="
-            activeSection ===
-            'dashboard'
-          "
-          class="page-content dashboard-page"
-        >
+  v-if="
+    activeSection ===
+    'dashboard'
+  "
+  class="page-content dashboard-page"
+>
+
+
 
           <!-- HERO -->
 
@@ -1616,7 +1720,32 @@ onUnmounted(() => {
               <div
                 class="customizer-options"
               >
+                <label class="customizer-option">
 
+                  <div>
+
+                    <strong>
+                      Clima
+                    </strong>
+
+                    <span>
+                      Temperatura y condiciones
+                      meteorológicas.
+                    </span>
+
+                  </div>
+
+                  <input
+                    type="checkbox"
+                    :checked="
+                      dashboardPreferences.weather
+                    "
+                    @change="
+                      toggleDashboardPanel('weather')
+                    "
+                  />
+
+                </label>
                 <label
                   class="customizer-option"
                 >
@@ -1922,6 +2051,7 @@ onUnmounted(() => {
           </section>
 
           <!-- OVERVIEW -->
+         
 
           <section
             v-if="
@@ -2192,405 +2322,631 @@ onUnmounted(() => {
 
           </section>
 
-          <!-- DEVICES -->
+      
+<!-- =====================================================
+     DISPOSITIVOS + CLIMA
+===================================================== -->
+<!-- =====================================================
+     DISPOSITIVOS + CLIMA
+===================================================== -->
 
-          <section
-            v-if="
-              dashboardPreferences
-                .devices
-            "
-            class="devices-section dashboard-panel"
-          >
 
-            <div
-              class="section-heading"
-            >
-
-              <div>
-
-                <span
-                  class="section-kicker"
-                >
-                  HARDWARE
-                </span>
-
-                <h3>
-                  Dispositivos
-                </h3>
-
-                <p>
-                  Controla tus ESP32 conectados.
-                </p>
-
-              </div>
-
-              <button
-                class="outline-button"
-                @click="
-                  selectSection(
-                    'devices'
-                  )
-                "
-              >
-                Ver todos
-                <span>→</span>
-              </button>
-
-            </div>
-
-            <div
-              v-if="devices.length"
-              class="devices-grid"
-            >
-
-              <article
-                v-for="device in devices"
-                :key="device.id"
-                class="device-card"
-                :class="{
-                  'device-offline':
-                    deviceIsOffline(
-                      device
-                    )
-                }"
-              >
-
-                <div
-                  class="device-card-top"
-                >
-
-                  <div
-                    class="device-info"
-                  >
-
-                    <div
-                      class="device-avatar"
-                      :class="{
-                        online:
-                          device.status ===
-                          'online',
-                        offline:
-                          device.status ===
-                          'offline'
-                      }"
-                    >
-                      ESP
-                    </div>
-
-                    <div>
-
-                      <h4>
-                        {{ device.name }}
-                      </h4>
-
-                      <span>
-                        {{ device.type }}
-                        <b>·</b>
-                        {{ device.location }}
-                      </span>
-
-                    </div>
-
-                  </div>
-
-                  <div
-                    class="device-status"
-                    :class="
-                      device.status
-                    "
-                  >
-
-                    <span></span>
-
-                    {{
-                      device.status ===
-                      'online'
-                        ? 'ONLINE'
-                        : 'OFFLINE'
-                    }}
-
-                  </div>
-
-                </div>
-              
+<div class="dashboard-two-columns">
 
 
 
-                <div
-                  v-if="
-                    deviceIsOffline(
-                      device
-                    )
-                  "
-                  class="device-offline-message"
-                >
 
-                  <span
-                    class="offline-message-icon"
-                  >
-                    !
-                  </span>
 
-                  <div>
+  <!-- =================================================
+       COLUMNA IZQUIERDA: DISPOSITIVOS
+  ================================================== -->
 
-                    <strong>
-                      Sin comunicación
-                    </strong>
-
-                    <span>
-                      Los controles están
-                      temporalmente bloqueados.
-                    </span>
-
-                  </div>
-
-                </div>
-
-                <div
-                  class="device-meta"
-                >
-
-                  <span>
-                    {{ device.actuators.length }}
-                    actuador{{
-                      device.actuators.length ===
-                      1
-                        ? ''
-                        : 'es'
-                    }}
-                  </span>
-
-                  <span>
-                    ID #{{ device.id }}
-                  </span>
-
-                </div>
-
-                
-                <!-- =================================================
-     SENSORES
-================================================== -->
-
-<div
-  v-if="
-    device.sensors &&
-    device.sensors.length
-  "
-  class="device-subsection"
+<section
+  v-if="dashboardPreferences.devices"
+  class="devices-section dashboard-panel"
 >
 
-  <div class="subsection-title">
-    <span class="section-kicker">SENSORES</span>
-  </div>
-
-  <div class="led-grid">
-
-    <div
-      v-for="sensor in device.sensors"
-      :key="sensor.id"
-      class="led-control temperature-control"
-    >
-
-      <div class="led-info">
-
-        <div class="led-indicator temperature-indicator">
-          <span>🌡️</span>
-        </div>
-
-        <div>
-
-          <strong>
-            {{ sensor.name }}
-          </strong>
-
-          <small>
-            {{ sensor.type }}
-            · GPIO {{ sensor.gpio }}
-          </small>
-
-        </div>
-
-      </div>
-
-      <div class="temperature-value">
-        {{
-          sensor.temperature !== undefined
-            ? sensor.temperature.toFixed(1)
-            : '--'
-        }}°C
-      </div>
-
-    </div>
-
-  </div>
-
-</div>
 
 
-<!-- =================================================
-     ACTUADORES
-================================================== -->
 
-<div class="device-subsection">
 
-  <div class="subsection-title">
-    <span class="section-kicker">ACTUADORES</span>
-  </div>
+    <div class="section-heading">
 
-  <div class="led-grid">
+      <div>
+        <span class="section-kicker">
+          HARDWARE
+        </span>
 
-    <div
-      v-for="actuator in device.actuators"
-      :key="actuator.id"
-      class="led-control"
-      :class="{
-        changing:
-          isActuatorChanging(
-            device.id,
-            actuator.id
-          ),
-        disabled:
-          device.status !== 'online'
-      }"
-    >
+        <h3>
+          Dispositivos
+        </h3>
 
-      <div class="led-info">
-
-        <div
-          class="led-indicator"
-          :class="{
-            on: actuator.state,
-            changing:
-              isActuatorChanging(
-                device.id,
-                actuator.id
-              )
-          }"
-        >
-          <span></span>
-        </div>
-
-        <div>
-
-          <strong>
-            {{ actuator.name }}
-          </strong>
-
-          <small>
-            {{ actuator.type }}
-            · GPIO {{ actuator.gpio }}
-          </small>
-
-        </div>
-
+        <p>
+          Controla tus ESP32 conectados.
+        </p>
       </div>
 
       <button
-        class="led-button"
-        :class="{
-          active: actuator.state,
-          changing:
-            isActuatorChanging(
-              device.id,
-              actuator.id
-            ),
-          offline:
-            device.status !== 'online'
-        }"
-        :disabled="
-          device.status !== 'online' ||
-          isActuatorChanging(
-            device.id,
-            actuator.id
-          )
-        "
-        @click="
-          toggleActuator(
-            device,
-            actuator
-          )
-        "
+        class="outline-button"
+        type="button"
+        @click="selectSection('devices')"
       >
-
-        <span
-          class="led-button-dot"
-        ></span>
-
-        <span
-          class="led-button-label"
-        >
-          {{
-            actuatorButtonLabel(
-              device,
-              actuator
-            )
-          }}
-        </span>
-
+        Ver todos
+        <span>→</span>
       </button>
 
     </div>
 
     <div
-      v-if="device.actuators.length === 0"
-      class="no-actuators"
+      v-if="devices.length"
+      class="devices-grid"
     >
-      Sin actuadores configurados
-    </div>
 
-  </div>
+      <article
+        v-for="device in devices"
+        :key="device.id"
+        class="device-card"
+        :class="{
+          'device-offline':
+            deviceIsOffline(device)
+        }"
+      >
 
-</div>
+        <div class="device-card-top">
 
+          <div class="device-info">
 
-              </article>
+            <div
+              class="device-avatar"
+              :class="{
+                online:
+                  device.status === 'online',
+                offline:
+                  device.status === 'offline'
+              }"
+            >
+              ESP
+            </div>
+
+            <div>
+
+              <h4>
+                {{ device.name }}
+              </h4>
+
+              <span>
+                {{ device.type }}
+                <b>·</b>
+                {{ device.location }}
+              </span>
+
+            </div>
+
+          </div>
+
+          <div
+            class="device-status"
+            :class="device.status"
+          >
+
+            <span></span>
+
+            {{
+              device.status === 'online'
+                ? 'ONLINE'
+                : 'OFFLINE'
+            }}
+
+          </div>
+
+        </div>
+
+        <div
+          v-if="deviceIsOffline(device)"
+          class="device-offline-message"
+        >
+
+          <span class="offline-message-icon">
+            !
+          </span>
+
+          <div>
+
+            <strong>
+              Sin comunicación
+            </strong>
+
+            <span>
+              Los controles están
+              temporalmente bloqueados.
+            </span>
+
+          </div>
+
+        </div>
+
+        <div class="device-meta">
+
+          <span>
+            {{ device.actuators.length }}
+            actuador{{
+              device.actuators.length === 1
+                ? ''
+                : 'es'
+            }}
+          </span>
+
+          <span>
+            ID #{{ device.id }}
+          </span>
+
+        </div>
+
+        <!-- SENSORES -->
+
+        <div
+          v-if="
+            device.sensors &&
+            device.sensors.length
+          "
+          class="device-subsection"
+        >
+
+          <div class="subsection-title">
+
+            <span class="section-kicker">
+              SENSORES
+            </span>
+
+          </div>
+
+          <div class="led-grid">
+
+            <div
+              v-for="sensor in device.sensors"
+              :key="sensor.id"
+              class="led-control temperature-control"
+            >
+
+              <div class="led-info">
+
+                <div
+                  class="led-indicator temperature-indicator"
+                >
+                  <span>🌡️</span>
+                </div>
+
+                <div>
+
+                  <strong>
+                    {{ sensor.name }}
+                  </strong>
+
+                  <small>
+                    {{ sensor.type }}
+                    · GPIO {{ sensor.gpio }}
+                  </small>
+
+                </div>
+
+              </div>
+
+              <div class="temperature-value">
+
+                {{
+                  sensor.temperature !== undefined
+                    ? sensor.temperature.toFixed(1)
+                    : '--'
+                }}°C
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- ACTUADORES -->
+
+        <div class="device-subsection">
+
+          <div class="subsection-title">
+
+            <span class="section-kicker">
+              ACTUADORES
+            </span>
+
+          </div>
+
+          <div class="led-grid">
+
+            <div
+              v-for="actuator in device.actuators"
+              :key="actuator.id"
+              class="led-control"
+              :class="{
+                changing:
+                  isActuatorChanging(
+                    device.id,
+                    actuator.id
+                  ),
+                disabled:
+                  device.status !== 'online'
+              }"
+            >
+
+              <div class="led-info">
+
+                <div
+                  class="led-indicator"
+                  :class="{
+                    on: actuator.state,
+                    changing:
+                      isActuatorChanging(
+                        device.id,
+                        actuator.id
+                      )
+                  }"
+                >
+                  <span></span>
+                </div>
+
+                <div>
+
+                  <strong>
+                    {{ actuator.name }}
+                  </strong>
+
+                  <small>
+                    {{ actuator.type }}
+                    · GPIO {{ actuator.gpio }}
+                  </small>
+
+                </div>
+
+              </div>
+
+              <button
+                class="led-button"
+                :class="{
+                  active: actuator.state,
+                  changing:
+                    isActuatorChanging(
+                      device.id,
+                      actuator.id
+                    ),
+                  offline:
+                    device.status !== 'online'
+                }"
+                :disabled="
+                  device.status !== 'online' ||
+                  isActuatorChanging(
+                    device.id,
+                    actuator.id
+                  )
+                "
+                @click="
+                  toggleActuator(
+                    device,
+                    actuator
+                  )
+                "
+              >
+
+                <span class="led-button-dot"></span>
+
+                <span class="led-button-label">
+
+                  {{
+                    actuatorButtonLabel(
+                      device,
+                      actuator
+                    )
+                  }}
+
+                </span>
+
+              </button>
 
             </div>
 
             <div
-              v-else
-              class="empty-state"
+              v-if="device.actuators.length === 0"
+              class="no-actuators"
             >
-
-              <div
-                class="empty-state-icon"
-              >
-                ▣
-              </div>
-
-              <h3>
-                Esperando dispositivos
-              </h3>
-
-              <p>
-                Cuando un ESP32 se registre,
-                aparecerá automáticamente aquí.
-              </p>
-
-              <div
-                class="waiting-status"
-              >
-
-                <span
-                  class="status-dot"
-                  :class="{
-                    online:
-                      wsConnected
-                  }"
-                ></span>
-
-                {{
-                  wsConnected
-                    ? 'WebSocket conectado'
-                    : 'Esperando conexión WebSocket'
-                }}
-
-              </div>
-
+              Sin actuadores configurados
             </div>
 
-          </section>
+          </div>
 
+        </div>
+
+      </article>
+
+    </div>
+
+    <div
+      v-else
+      class="empty-state"
+    >
+
+      <div class="empty-state-icon">
+        ▣
+      </div>
+
+      <h3>
+        Esperando dispositivos
+      </h3>
+
+      <p>
+        Cuando un ESP32 se registre,
+        aparecerá automáticamente aquí.
+      </p>
+
+      <div class="waiting-status">
+
+        <span
+          class="status-dot"
+          :class="{
+            online: wsConnected
+          }"
+        ></span>
+
+        {{
+          wsConnected
+            ? 'WebSocket conectado'
+            : 'Esperando conexión WebSocket'
+        }}
+
+      </div>
+
+    </div>
+
+  </section>
+
+
+  <!-- =================================================
+       COLUMNA DERECHA: CLIMA
+  ================================================== -->
+  
+<section
+  v-if="dashboardPreferences.weather"
+  class="weather-section dashboard-panel"
+>
+  <div class="section-heading">
+
+    <div>
+      <span class="section-kicker">
+        WEATHER
+      </span>
+
+      <h3>
+        Clima
+      </h3>
+
+      <p>
+        Condiciones meteorológicas actuales.
+      </p>
+    </div>
+
+  </div>
+
+  <article class="device-card">
+
+  <!-- INFORMACIÓN PRINCIPAL -->
+
+  <div class="weather-main">
+
+    <div class="weather-icon">
+      {{ weather.icon }}
+    </div>
+
+    <div class="weather-main-info">
+
+      <div class="weather-location">
+        <strong>
+          {{ weather.city }}
+        </strong>
+
+        <span>
+          {{ weather.country }}
+        </span>
+      </div>
+
+      <div class="weather-temperature">
+        {{ weather.temperature }}°C
+      </div>
+
+      <strong class="weather-condition">
+        {{ weather.condition }}
+      </strong>
+
+      <span class="weather-feels-like">
+        Sensación {{ weather.feelsLike }}°C
+      </span>
+
+    </div>
+
+    <div class="weather-datetime">
+
+      <span>
+        {{ weather.date }}
+      </span>
+
+      <strong>
+        {{ weather.time }}
+      </strong>
+
+    </div>
+
+  </div>
+
+
+  <!-- DATOS METEOROLÓGICOS -->
+
+  <div class="weather-details">
+
+    <div class="weather-detail">
+
+      <span class="weather-detail-icon">
+        ☀️
+      </span>
+
+      <div>
+        <small>UV</small>
+        <strong>
+          {{ weather.uvIndex }}
+        </strong>
+      </div>
+
+    </div>
+
+
+    <div class="weather-detail">
+
+      <span class="weather-detail-icon">
+        💧
+      </span>
+
+      <div>
+        <small>Humedad</small>
+        <strong>
+          {{ weather.humidity }}%
+        </strong>
+      </div>
+
+    </div>
+
+
+    <div class="weather-detail">
+
+      <span class="weather-detail-icon">
+        💨
+      </span>
+
+      <div>
+        <small>Viento</small>
+        <strong>
+          {{ weather.windSpeed }} km/h
+        </strong>
+      </div>
+
+    </div>
+
+
+    <div class="weather-detail">
+
+      <span class="weather-detail-icon">
+        🧭
+      </span>
+
+      <div>
+        <small>Dirección</small>
+        <strong>
+          {{ weather.windDirection }}
+        </strong>
+      </div>
+
+    </div>
+
+
+    <div class="weather-detail">
+
+      <span class="weather-detail-icon">
+        🌧️
+      </span>
+
+      <div>
+        <small>Agua</small>
+        <strong>
+          {{ weather.precipitation }} mm
+        </strong>
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- ADVERTENCIA -->
+
+  <div class="weather-warning">
+
+    <div class="weather-warning-icon">
+      ⚠️
+    </div>
+
+    <div>
+
+      <strong>
+        {{ weather.warningTitle }}
+      </strong>
+
+      <span>
+        {{ weather.warningDescription }}
+      </span>
+
+    </div>
+
+  </div>
+
+
+  <!-- PRONÓSTICO -->
+
+  <div class="weather-forecast">
+
+    <div class="weather-forecast-heading">
+
+      <span class="section-kicker">
+        PRONÓSTICO
+      </span>
+
+      <span>
+        Próximas horas
+      </span>
+
+    </div>
+
+
+    <div class="weather-forecast-grid">
+
+      <div
+        v-for="forecast in weather.forecast"
+        :key="forecast.time"
+        class="weather-forecast-item"
+      >
+
+        <strong class="forecast-time">
+          {{ forecast.time }}
+        </strong>
+
+        <span class="forecast-icon">
+          {{ forecast.icon }}
+        </span>
+
+        <strong class="forecast-temperature">
+          {{ forecast.temperature }}°
+        </strong>
+
+        <span class="forecast-condition">
+          {{ forecast.condition }}
+        </span>
+
+        <span class="forecast-rain">
+          💧 {{ forecast.precipitationProbability }}%
+        </span>
+
+      </div>
+
+    </div>
+
+  </div>
+</article>
+</section>
+</div>
+
+<!-- FIN DISPOSITIVOS + CLIMA -->
           <!-- ACTIVITY -->
 
           <section
@@ -3189,3 +3545,4 @@ onUnmounted(() => {
 
   </div>
 </template>
+

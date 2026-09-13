@@ -1557,7 +1557,7 @@ button:disabled {
 /* =====================================================
    DEVICES / IOT
 ===================================================== */
-
+/*
 .devices-section {
   margin-bottom: 30px;
 }
@@ -1569,7 +1569,18 @@ button:disabled {
     repeat(2, minmax(0, 1fr));
 
   gap: 16px;
+}*/
+.devices-grid {
+  display: grid;
+
+  grid-template-columns: minmax(0, 1fr);
+
+  gap: 16px;
+
+  width: 100%;
+  min-width: 0;
 }
+
 
 /* =====================================================
    TARJETA IoT
@@ -3364,6 +3375,7 @@ input[type="checkbox"]:checked {
     box-shadow:
       15px 0 40px rgba(0, 0, 0, 0.2);
   }
+  }
   /*temperatura*/
   /* =====================================================
    TARJETA DE TEMPERATURA - COMPACTA
@@ -3429,4 +3441,381 @@ input[type="checkbox"]:checked {
   font-weight: 700;
   color: #ef4444;
   white-space: nowrap;
+}
+/*hasta aqui todo bien*/
+/* =====================================================
+   DASHBOARD - ANCHO COMPLETO
+===================================================== */
+
+.dashboard-page {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+
+/* =====================================================
+   DISPOSITIVOS + CLIMA
+   50% / 50%
+===================================================== */
+
+.dashboard-two-columns {
+  display: grid !important;
+
+  grid-template-columns: minmax(0, 1fr) !important;
+
+  grid-template-rows: auto auto !important;
+
+  gap: 24px !important;
+
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+
+  margin: 0 !important;
+  padding: 0 !important;
+
+  box-sizing: border-box !important;
+
+  align-items: start !important;
+}
+
+
+/* =====================================================
+   DISPOSITIVOS
+===================================================== */
+
+.dashboard-two-columns > .devices-section {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+
+  margin: 0 !important;
+
+  box-sizing: border-box !important;
+}
+
+
+/* =====================================================
+   CLIMA
+===================================================== */
+/* =========================================
+   WEATHER
+   ========================================= */
+
+.weather-card {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 18px;
+}
+
+
+/* INFORMACIÓN PRINCIPAL */
+
+.weather-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.weather-icon {
+  flex-shrink: 0;
+  font-size: 42px;
+}
+
+.weather-main-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.weather-location {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.weather-location strong {
+  font-size: 18px;
+}
+
+.weather-location span {
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.weather-temperature {
+  font-size: 38px;
+  line-height: 1;
+  font-weight: 700;
+  margin: 5px 0;
+}
+
+.weather-condition {
+  font-size: 14px;
+}
+
+.weather-feels-like {
+  display: block;
+  font-size: 12px;
+  opacity: 0.65;
+  margin-top: 3px;
+}
+
+
+/* FECHA Y HORA */
+
+.weather-datetime {
+  flex-shrink: 0;
+  margin-left: auto;
+  text-align: right;
+}
+
+.weather-datetime span {
+  display: block;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.weather-datetime strong {
+  display: block;
+  font-size: 16px;
+  margin-top: 3px;
+}
+
+
+/* DATOS METEOROLÓGICOS */
+
+.weather-details {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.weather-detail {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  min-width: 0;
+}
+
+.weather-detail-icon {
+  flex-shrink: 0;
+  font-size: 17px;
+}
+
+.weather-detail small {
+  display: block;
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.weather-detail strong {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+
+/* ADVERTENCIA */
+
+.weather-warning {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 10px 12px;
+}
+
+.weather-warning-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+.weather-warning > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.weather-warning strong {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.weather-warning span {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+
+/* PRONÓSTICO */
+
+.weather-forecast {
+  margin-top: 18px;
+}
+
+.weather-forecast-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.weather-forecast-heading > span:last-child {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+
+/*
+   IMPORTANTE:
+   No usamos overflow-x.
+   El pronóstico se adapta al ancho disponible.
+*/
+
+.weather-forecast-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(85px, 1fr)
+  );
+  gap: 7px;
+  width: 100%;
+}
+
+
+/* TARJETA INDIVIDUAL DEL PRONÓSTICO */
+
+.weather-forecast-item {
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 5px;
+  text-align: center;
+}
+
+.forecast-time {
+  display: block;
+  font-size: 11px;
+}
+
+.forecast-icon {
+  display: block;
+  font-size: 21px;
+  margin: 5px 0;
+}
+
+.forecast-temperature {
+  display: block;
+  font-size: 16px;
+}
+
+.forecast-condition {
+  display: block;
+  font-size: 10px;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.forecast-rain {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+
+/* =========================================
+   TABLET
+   ========================================= */
+
+@media (max-width: 800px) {
+
+  .weather-details {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .weather-forecast-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+}
+
+
+/* =========================================
+   MÓVIL
+   ========================================= */
+
+@media (max-width: 600px) {
+
+  .weather-card {
+    padding: 14px;
+  }
+
+  .weather-main {
+    gap: 10px;
+  }
+
+  .weather-icon {
+    font-size: 34px;
+  }
+
+  .weather-temperature {
+    font-size: 32px;
+  }
+
+  .weather-location {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+
+  .weather-datetime {
+    min-width: 75px;
+  }
+
+  .weather-details {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .weather-forecast-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+}
+
+
+/* =========================================
+   MÓVIL PEQUEÑO
+   ========================================= */
+
+@media (max-width: 420px) {
+
+  .weather-main {
+    flex-wrap: wrap;
+  }
+
+  .weather-datetime {
+    width: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .weather-details {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .weather-forecast-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
 }
