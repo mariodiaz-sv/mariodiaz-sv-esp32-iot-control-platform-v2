@@ -1,6 +1,20 @@
 ﻿<script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { getHealth } from './services/api'
+import {
+  computed,
+  onMounted,
+  onUnmounted,
+  ref
+} from 'vue'
+
+import {
+  getHealth,
+  getWeather,
+  getWeatherLocation,
+  updateWeatherLocation,
+} from './services/api'
+
+
+
 
 type DeviceStatus = 'online' | 'offline'
 
@@ -90,6 +104,27 @@ interface WeatherData {
   warningDescription: string
   forecast: WeatherForecast[]
 }
+const weather = ref<WeatherData>({
+  city: '',
+  country: '',
+  date: '',
+  time: '',
+  temperature: 0,
+  feelsLike: 0,
+  humidity: 0,
+  uvIndex: 0,
+  windSpeed: 0,
+  windDirection: '',
+  precipitation: 0,
+  condition: '',
+  icon: '🌤️',
+  warningTitle: '',
+  warningDescription: '',
+  forecast: [],
+})
+
+const weatherLoading = ref(false)
+const weatherError = ref('')
 
 
 /* =====================================================
@@ -99,70 +134,664 @@ interface WeatherData {
 const activeSection = ref('dashboard')
 const mobileMenuOpen = ref(false)
 
+/* =====================================================
+   CONFIGURACIÓN DEL CLIMA
+===================================================== */
 
-const weather = ref<WeatherData>({
+interface WeatherSettings {
+  city: string
+  latitude: number
+  longitude: number
+  timezone: string
+}
+
+const weatherSettings = ref<WeatherSettings>({
   city: 'Santa Tecla',
-  country: 'El Salvador',
+  latitude: 13.673111,
+  longitude: -89.25687,
+  timezone: 'America/El_Salvador',
+})
 
-  date: '12 de septiembre',
-  time: '10:00',
 
-  temperature: 27,
-  feelsLike: 28,
 
-  humidity: 72,
-  uvIndex: 6,
+const weatherSettingsOpen = ref(false)
 
-  windSpeed: 12,
-  windDirection: '↗',
+const settingsLoading = ref(false)
+const settingsMessage = ref('')
+const settingsError = ref('')
 
-  precipitation: 0,
+const citySearching = ref(false)
+const citySearchError = ref('')
 
-  condition: 'Parcialmente nublado',
-  icon: '⛅',
+const citySearchResults =
+  ref<CitySearchResult[]>([])
 
-  warningTitle: 'Sin alertas',
-  warningDescription:
-    'Las condiciones actuales no requieren advertencias especiales.',
+/*
+ * Búsqueda de ciudad mediante Open-Meteo Geocoding.
+ *
+ * El usuario solamente escribe la ciudad.
+ * Open-Meteo devuelve:
+ * - latitud
+ * - longitud
+ * - zona horaria
+ * - país
+ */
 
-  forecast: [
-    {
-      time: '10:00',
-      temperature: 27,
+interface CitySearchResult {
+  id: number
+  name: string
+  latitude: number
+  longitude: number
+  timezone: string
+  country: string
+  country_code: string
+  admin1?: string
+  admin2?: string
+  population?: number
+}
+
+async function searchCity() {
+  const city =
+    weatherSettings.value.city.trim()
+
+  citySearchError.value = ''
+  settingsMessage.value = ''
+  citySearchResults.value = []
+
+  if (!city) {
+    citySearchError.value =
+      'Escribe una ciudad para buscarla.'
+
+    return
+  }
+
+  citySearching.value = true
+
+  try {
+    const url =
+      'https://geocoding-api.open-meteo.com/v1/search' +
+      `?name=${encodeURIComponent(city)}` +
+      '&count=10' +
+      '&language=es' +
+      '&format=json'
+
+    const response =
+      await fetch(url)
+
+    if (!response.ok) {
+      throw new Error(
+        'No se pudo consultar Open-Meteo.'
+      )
+    }
+
+    const data =
+      await response.json()
+
+    if (
+      !data.results ||
+      data.results.length === 0
+    ) {
+      throw new Error(
+        `No se encontró la ciudad "${city}".`
+      )
+    }
+
+    citySearchResults.value =
+      data.results
+
+  } catch (error) {
+    console.error(
+      '[OPEN-METEO] Error buscando ciudad:',
+      error
+    )
+
+    citySearchError.value =
+      error instanceof Error
+        ? error.message
+        : 'No se pudo encontrar la ciudad.'
+
+  } finally {
+    citySearching.value = false
+  }
+}
+
+function selectCity(
+  location: CitySearchResult
+) {
+  weatherSettings.value = {
+    city: location.name,
+    latitude: Number(location.latitude),
+    longitude: Number(location.longitude),
+    timezone:
+      location.timezone ??
+      'UTC',
+  }
+
+  citySearchResults.value = []
+
+  citySearchError.value = ''
+
+  settingsMessage.value =
+    `Ubicación seleccionada: ${
+      location.name
+    }, ${
+      location.admin1 ?? ''
+    }, ${
+      location.country
+    }`
+}
+
+
+/* =====================================================
+   CONFIGURACIÓN DEL CLIMA
+===================================================== */
+
+
+function getWeatherCondition(
+  weatherCode: number
+): {
+  condition: string
+  icon: string
+} {
+  if (weatherCode === 0) {
+    return {
+      condition: 'Despejado',
+      icon: '☀️',
+    }
+  }
+
+  if (
+    weatherCode === 1 ||
+    weatherCode === 2
+  ) {
+    return {
       condition: 'Parcialmente nublado',
       icon: '⛅',
-      precipitationProbability: 10,
-    },
-    {
-      time: '11:00',
-      temperature: 28,
-      condition: 'Soleado',
-      icon: '☀️',
-      precipitationProbability: 5,
-    },
-    {
-      time: '12:00',
-      temperature: 29,
-      condition: 'Soleado',
-      icon: '☀️',
-      precipitationProbability: 8,
-    },
-    {
-      time: '13:00',
-      temperature: 29,
-      condition: 'Lluvia ligera',
+    }
+  }
+
+  if (weatherCode === 3) {
+    return {
+      condition: 'Nublado',
+      icon: '☁️',
+    }
+  }
+
+  if (
+    weatherCode === 45 ||
+    weatherCode === 48
+  ) {
+    return {
+      condition: 'Niebla',
+      icon: '🌫️',
+    }
+  }
+
+  if (
+    weatherCode >= 51 &&
+    weatherCode <= 57
+  ) {
+    return {
+      condition: 'Llovizna',
       icon: '🌦️',
-      precipitationProbability: 35,
-    },
-    {
-      time: '14:00',
-      temperature: 27,
+    }
+  }
+
+  if (
+    weatherCode >= 61 &&
+    weatherCode <= 67
+  ) {
+    return {
       condition: 'Lluvia',
       icon: '🌧️',
-      precipitationProbability: 60,
-    },
-  ],
-})
+    }
+  }
+
+  if (
+    weatherCode >= 71 &&
+    weatherCode <= 77
+  ) {
+    return {
+      condition: 'Nieve',
+      icon: '🌨️',
+    }
+  }
+
+  if (
+    weatherCode >= 80 &&
+    weatherCode <= 82
+  ) {
+    return {
+      condition: 'Chubascos',
+      icon: '🌦️',
+    }
+  }
+
+  if (
+    weatherCode === 95 ||
+    weatherCode === 96 ||
+    weatherCode === 99
+  ) {
+    return {
+      condition: 'Tormenta',
+      icon: '⛈️',
+    }
+  }
+
+  return {
+    condition: 'Condición desconocida',
+    icon: '🌤️',
+  }
+}
+
+function getWindDirection(
+  degrees: number
+): string {
+  const directions = [
+    'N',
+    'NE',
+    'E',
+    'SE',
+    'S',
+    'SO',
+    'O',
+    'NO',
+  ]
+
+  const index = Math.round(
+    degrees / 45
+  ) % 8
+
+  return directions[index]
+}
+
+function formatWeatherDate(
+  dateString: string
+): {
+  date: string
+  time: string
+} {
+  const date = new Date(dateString)
+
+  if (Number.isNaN(date.getTime())) {
+    return {
+      date: '--',
+      time: '--',
+    }
+  }
+
+  return {
+    date: date.toLocaleDateString(
+      'es-SV',
+      {
+        day: 'numeric',
+        month: 'long',
+      }
+    ),
+    time: date.toLocaleTimeString(
+      'es-SV',
+      {
+        hour: '2-digit',
+        minute: '2-digit',
+      }
+    ),
+  }
+}
+
+function getWeatherWarning(
+  weatherCode: number
+): {
+  title: string
+  description: string
+} {
+  if (
+    weatherCode === 95 ||
+    weatherCode === 96 ||
+    weatherCode === 99
+  ) {
+    return {
+      title: 'Precaución',
+      description:
+        'Se reportan condiciones de tormenta.',
+    }
+  }
+
+  if (
+    weatherCode >= 61 &&
+    weatherCode <= 82
+  ) {
+    return {
+      title: 'Condiciones de lluvia',
+      description:
+        'Se esperan precipitaciones durante el período consultado.',
+    }
+  }
+
+  return {
+    title: 'Sin alertas',
+    description:
+      'Las condiciones actuales no requieren advertencias especiales.',
+  }
+}
+async function loadWeatherSettings() {
+  try {
+    const location = await getWeatherLocation()
+
+    weatherSettings.value = {
+      city:
+        location.city ?? '',
+
+      latitude:
+        Number(location.latitude),
+
+      longitude:
+        Number(location.longitude),
+
+      timezone:
+        location.timezone ??
+        'America/El_Salvador',
+    }
+  } catch (error) {
+    console.error(
+      'Error cargando configuración del clima:',
+      error
+    )
+  }
+}
+
+async function saveWeatherSettings() {
+  settingsLoading.value = true
+  settingsMessage.value = ''
+  settingsError.value = ''
+
+  try {
+    const city =
+      weatherSettings.value.city.trim()
+
+    if (!city) {
+      throw new Error(
+        'La ciudad es obligatoria.'
+      )
+    }
+
+    /*
+     * Si todavía no tenemos coordenadas,
+     * buscamos automáticamente la ciudad.
+     */
+   if (
+  !Number.isFinite(
+    Number(weatherSettings.value.latitude)
+  ) ||
+  !Number.isFinite(
+    Number(weatherSettings.value.longitude)
+  )
+) {
+  throw new Error(
+    'Primero debes buscar y seleccionar una ciudad.'
+  )
+}
+
+
+    const latitude =
+      Number(
+        weatherSettings.value.latitude
+      )
+
+    const longitude =
+      Number(
+        weatherSettings.value.longitude
+      )
+
+    const timezone =
+      weatherSettings.value.timezone.trim()
+
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90
+    ) {
+      throw new Error(
+        'No se pudo obtener una latitud válida para la ciudad.'
+      )
+    }
+
+    if (
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new Error(
+        'No se pudo obtener una longitud válida para la ciudad.'
+      )
+    }
+
+    if (!timezone) {
+      throw new Error(
+        'No se pudo obtener la zona horaria de la ciudad.'
+      )
+    }
+
+    const location =
+      await updateWeatherLocation({
+        city:
+          weatherSettings.value.city,
+
+        latitude,
+
+        longitude,
+
+        timezone,
+      })
+
+    weatherSettings.value = {
+      city:
+        location.city ??
+        weatherSettings.value.city,
+
+      latitude:
+        Number(location.latitude),
+
+      longitude:
+        Number(location.longitude),
+
+      timezone:
+        location.timezone ??
+        timezone,
+    }
+
+    settingsMessage.value =
+      'Ubicación actualizada correctamente.'
+
+    await loadWeather()
+
+  } catch (error) {
+    settingsError.value =
+      error instanceof Error
+        ? error.message
+        : 'No se pudo guardar la configuración.'
+
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+
+async function loadWeather() {
+  weatherLoading.value = true
+  weatherError.value = ''
+
+  try {
+    const data = await getWeather()
+
+    if (!data.current) {
+      throw new Error(
+        'La API no devolvió datos meteorológicos actuales.'
+      )
+    }
+
+    const current = data.current
+
+    const currentCondition =
+      getWeatherCondition(
+        current.weather_code
+      )
+
+    const currentDateTime =
+      formatWeatherDate(
+        current.time
+      )
+
+    const warning =
+      getWeatherWarning(
+        current.weather_code
+      )
+
+    const forecast = []
+
+if (data.forecast) {
+  const forecastTimes =
+    data.forecast.time
+
+  const currentTime =
+    new Date(current.time).getTime()
+
+  const firstFutureIndex =
+    forecastTimes.findIndex(
+      (time: string) =>
+        new Date(time).getTime() > currentTime
+    )
+
+  if (firstFutureIndex !== -1) {
+    const endIndex =
+      Math.min(
+        firstFutureIndex + 6,
+        forecastTimes.length
+      )
+
+    for (
+      let index = firstFutureIndex;
+      index < endIndex;
+      index++
+    ) {
+      const condition =
+        getWeatherCondition(
+          data.forecast.weather_code[
+            index
+          ]
+        )
+
+      const forecastDate =
+        formatWeatherDate(
+          data.forecast.time[index]
+        )
+
+      forecast.push({
+        time: forecastDate.time,
+
+        temperature:
+          Math.round(
+            data.forecast.temperature_2m[
+              index
+            ]
+          ),
+
+        condition:
+          condition.condition,
+
+        icon:
+          condition.icon,
+
+        precipitationProbability:
+          data.forecast
+            .precipitation_probability[
+              index
+            ] ?? 0,
+      })
+    }
+  }
+}
+
+
+    weather.value = {
+      city:
+        data.location.city ??
+        'Ubicación desconocida',
+
+      country:
+        data.location.country ??
+        '',
+
+      date:
+        currentDateTime.date,
+
+      time:
+        currentDateTime.time,
+
+      temperature:
+        Number(
+          current.temperature_2m
+        ),
+
+      feelsLike:
+        Number(
+          current.apparent_temperature
+        ),
+
+      humidity:
+        Number(
+          current.relative_humidity_2m
+        ),
+
+      uvIndex:
+        Number(
+          current.uv_index
+        ),
+
+      windSpeed:
+        Number(
+          current.wind_speed_10m
+        ),
+
+      windDirection:
+        getWindDirection(
+          Number(
+            current.wind_direction_10m
+          )
+        ),
+
+      precipitation:
+        Number(
+          current.precipitation
+        ),
+
+      condition:
+        currentCondition.condition,
+
+      icon:
+        currentCondition.icon,
+
+      warningTitle:
+        warning.title,
+
+      warningDescription:
+        warning.description,
+
+      forecast,
+    }
+  } catch (error) {
+    weatherError.value =
+      error instanceof Error
+        ? error.message
+        : 'No se pudo obtener el clima.'
+
+    console.error(
+      '[WEATHER] Error:',
+      error
+    )
+  } finally {
+    weatherLoading.value = false
+  }
+}
 
 /* =====================================================
    THEME
@@ -218,55 +847,8 @@ const totalSensors = computed(() =>
    TEMPERATURA - DATOS PARA LA TARJETA Y GRÁFICO
 ===================================================== */
 
-function getTemperatureSensor(
-  device: Device
-): Sensor | undefined {
-  return device.sensors?.find(
-    sensor =>
-      sensor.type === 'temperature' &&
-      sensor.temperature !== undefined
-  )
-}
 
-function getTemperatureHistory(
-  deviceId: number
-): TemperaturePoint[] {
-  return temperatureHistory.value[deviceId] ?? []
-}
 
-function getTemperatureMin(
-  deviceId: number
-): number {
-  const history =
-    getTemperatureHistory(deviceId)
-
-  if (!history.length) {
-    return 0
-  }
-
-  return Math.min(
-    ...history.map(
-      point => point.temperature
-    )
-  )
-}
-
-function getTemperatureMax(
-  deviceId: number
-): number {
-  const history =
-    getTemperatureHistory(deviceId)
-
-  if (!history.length) {
-    return 0
-  }
-
-  return Math.max(
-    ...history.map(
-      point => point.temperature
-    )
-  )
-}
 
 /* =====================================================
    ACTUATOR PENDING
@@ -492,6 +1074,31 @@ function saveDashboardPreferences() {
     )
   )
 }
+
+
+//fin buscar por ciudad
+
+async function openWeatherSettings() {
+  settingsMessage.value = ''
+  settingsError.value = ''
+  citySearchError.value = ''
+
+  weatherSettingsOpen.value = true
+
+  await loadWeatherSettings()
+}
+
+function closeWeatherSettings() {
+  if (
+    settingsLoading.value ||
+    citySearching.value
+  ) {
+    return
+  }
+
+  weatherSettingsOpen.value = false
+}
+
 
 function toggleDashboardPanel(
   panel: DashboardPanel
@@ -916,10 +1523,13 @@ function connectWebSocket() {
     '[WS] Conectando...'
   )
 
+  const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  'ws://127.0.0.1:8080'
+
   const socket =
-    new WebSocket(
-      'ws://127.0.0.1:8080'
-    )
+  new WebSocket(WS_URL)
+
 
   ws.value = socket
 
@@ -1186,13 +1796,18 @@ function actuatorButtonLabel(
    LIFECYCLE
 ===================================================== */
 
-onMounted(() => {
+onMounted(async () => {
   componentUnmounted = false
 
   applyTheme()
   checkApi()
+
+  await loadWeatherSettings()
+  await loadWeather()
+
   connectWebSocket()
 })
+
 
 onUnmounted(() => {
   componentUnmounted = true
@@ -1650,7 +2265,7 @@ onUnmounted(() => {
             </div>
 
             <button
-              class="customize-button"
+               class="customize-button"
               type="button"
               @click="
                 customizerOpen = true
@@ -2716,21 +3331,30 @@ onUnmounted(() => {
 >
   <div class="section-heading">
 
-    <div>
-      <span class="section-kicker">
-        WEATHER
-      </span>
+  <div>
+    <span class="section-kicker">
+      WEATHER
+    </span>
 
-      <h3>
-        Clima
-      </h3>
+    <h3>
+      Clima
+    </h3>
 
-      <p>
-        Condiciones meteorológicas actuales.
-      </p>
-    </div>
-
+    <p>
+      Condiciones meteorológicas actuales.
+    </p>
   </div>
+
+<button
+  type="button"
+  class="customize-button weather-config-button"
+  @click="openWeatherSettings"
+>
+  ⚙️ Configuración
+</button>
+
+</div>
+
 
   <article class="device-card">
 
@@ -3544,5 +4168,289 @@ onUnmounted(() => {
     </main>
 
   </div>
+
+  <!-- WEATHER CONFIGURATION MODAL -->
+
+  <div
+    v-if="weatherSettingsOpen"
+    class="weather-config-overlay"
+    @click.self="closeWeatherSettings"
+  >
+
+    <section
+      class="weather-config-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="weather-config-title"
+    >
+
+      <header class="weather-config-header">
+
+        <div>
+
+          <span class="section-kicker">
+            CONFIGURACIÓN
+          </span>
+
+          <h3 id="weather-config-title">
+            Configuración del clima
+          </h3>
+
+          <p>
+            Configura la ubicación utilizada
+            para consultar el clima.
+          </p>
+
+        </div>
+
+        <button
+          type="button"
+          class="weather-config-close"
+          aria-label="Cerrar configuración del clima"
+          :disabled="settingsLoading"
+          @click="closeWeatherSettings"
+        >
+          ×
+        </button>
+
+      </header>
+
+      <form
+      class="weather-config-form"
+  @submit.prevent="saveWeatherSettings"
+      >
+
+        <label>
+
+  <span>
+    Ciudad
+  </span>
+
+  <div class="city-search-row">
+
+    <input
+      v-model="weatherSettings.city"
+      type="text"
+      placeholder="Ej. Santa Tecla"
+      :disabled="
+        settingsLoading ||
+        citySearching
+      "
+      @keyup.enter="searchCity"
+    />
+
+    <button
+      type="button"
+      class="city-search-button"
+      :disabled="
+        settingsLoading ||
+        citySearching ||
+        !weatherSettings.city.trim()
+      "
+      @click="searchCity"
+    >
+      {{
+        citySearching
+          ? 'Buscando...'
+          : 'Buscar'
+      }}
+    </button>
+
+  </div>
+<div
+  v-if="citySearchResults.length > 0"
+  class="city-search-results"
+>
+
+  <div class="city-search-results-title">
+    Selecciona una ubicación:
+  </div>
+
+  <button
+    v-for="location in citySearchResults"
+    :key="location.id"
+    type="button"
+    class="city-search-result"
+    @click="selectCity(location)"
+  >
+
+    <div class="city-search-result-main">
+
+      <strong>
+        {{ location.name }}
+      </strong>
+
+      <span>
+        {{ location.admin1 }}
+        <template
+          v-if="location.admin2"
+        >
+          · {{ location.admin2 }}
+        </template>
+      </span>
+
+    </div>
+
+    <div class="city-search-result-country">
+
+      <span>
+        {{ location.country }}
+      </span>
+
+      <small>
+        {{ location.timezone }}
+      </small>
+
+    </div>
+
+  </button>
+
+</div>
+
+  <small>
+    Escribe una ciudad para obtener automáticamente sus coordenadas.
+  </small>
+
+</label>
+<!--mostrar los datos de la ciudad-->
+<div
+  v-if="
+    weatherSettings.latitude &&
+    weatherSettings.longitude
+  "
+  class="weather-location-preview"
+>
+
+  <div class="weather-location-preview-header">
+
+    <span>
+      📍
+    </span>
+
+    <div>
+
+      <strong>
+        Ubicación encontrada
+      </strong>
+
+      <small>
+        Open-Meteo
+      </small>
+
+    </div>
+
+  </div>
+
+  <div class="weather-location-data">
+
+    <div>
+
+      <span>
+        Ciudad
+      </span>
+
+      <strong>
+        {{ weatherSettings.city }}
+      </strong>
+
+    </div>
+
+    <div>
+
+      <span>
+        Latitud
+      </span>
+
+      <strong>
+        {{ weatherSettings.latitude }}
+      </strong>
+
+    </div>
+
+    <div>
+
+      <span>
+        Longitud
+      </span>
+
+      <strong>
+        {{ weatherSettings.longitude }}
+      </strong>
+
+    </div>
+
+    <div>
+
+      <span>
+        Zona horaria
+      </span>
+
+      <strong>
+        {{ weatherSettings.timezone }}
+      </strong>
+
+    </div>
+
+  </div>
+
+</div>
+<div
+  v-if="citySearchError"
+  class="weather-config-error"
+>
+  {{ citySearchError }}
+</div>
+
+
+       
+
+       
+        <div
+          v-if="settingsError"
+          class="weather-config-error"
+        >
+          {{ settingsError }}
+        </div>
+
+        <div
+          v-if="settingsMessage"
+          class="weather-config-message"
+        >
+          {{ settingsMessage }}
+        </div>
+
+        <div class="weather-config-actions">
+
+  <button
+    type="button"
+    class="weather-config-cancel"
+    :disabled="settingsLoading"
+    @click="closeWeatherSettings"
+  >
+    Cerrar
+  </button>
+
+  <button
+    type="submit"
+    class="weather-config-save"
+    :disabled="settingsLoading"
+  >
+    {{
+      settingsLoading
+        ? 'Guardando...'
+        : 'Guardar'
+    }}
+  </button>
+
+</div>
+
+
+      </form>
+
+    </section>
+
+  </div>
+
 </template>
+
 
