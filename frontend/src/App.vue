@@ -125,7 +125,19 @@ const weather = ref<WeatherData>({
 
 const weatherLoading = ref(false)
 const weatherError = ref('')
+/*para la hora local */
+const currentTime = ref('')
+let currentTimeTimer: ReturnType<typeof setInterval> | null = null
 
+function updateCurrentTime() {
+  currentTime.value = new Date().toLocaleTimeString(
+    'es-SV',
+    {
+      hour: '2-digit',
+      minute: '2-digit',
+    }
+  )
+}
 
 /* =====================================================
    NAVIGATION
@@ -1802,6 +1814,13 @@ onMounted(async () => {
   applyTheme()
   checkApi()
 
+  updateCurrentTime()
+
+  currentTimeTimer = setInterval(
+    updateCurrentTime,
+    1000
+  )
+
   await loadWeatherSettings()
   await loadWeather()
 
@@ -1811,6 +1830,11 @@ onMounted(async () => {
 
 onUnmounted(() => {
   componentUnmounted = true
+
+  if (currentTimeTimer) {
+  clearInterval(currentTimeTimer)
+  currentTimeTimer = null
+}
 
   if (reconnectTimer) {
     clearTimeout(
@@ -2163,6 +2187,21 @@ onUnmounted(() => {
             </div>
 
           </div>
+          <!--fecha y hora-->
+          <div class="weather-datetime">
+
+                <span>
+                  {{ weather.date }}
+                </span>
+
+                <strong>
+                  <!--{{ weather.time }}--><!--hora del clima-->
+                  {{ currentTime }}<!--hora local-->
+                </strong>
+
+              </div>
+
+          <!--fin fecha y hora-->
 
         </div>
 
@@ -3391,7 +3430,7 @@ onUnmounted(() => {
       </span>
 
     </div>
-
+<!--
     <div class="weather-datetime">
 
       <span>
@@ -3399,11 +3438,12 @@ onUnmounted(() => {
       </span>
 
       <strong>
-        {{ weather.time }}
-      </strong>
+        {{ weather.time }}<!--hora del clima-->
+        <!--{{ currentTime }}--><!--hora local-->
+     <!-- </strong>
 
     </div>
-
+      -->
   </div>
 
 

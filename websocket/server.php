@@ -496,22 +496,250 @@ class IoTWebSocketServer implements MessageComponentInterface
 
 
         /*
+|--------------------------------------------------------------------------
+| SENSORES
+|--------------------------------------------------------------------------
+|
+| El ESP32 puede enviar sensors[] durante register_device.
+|
+| Aquí:
+|
+| 1. Conservamos los sensores anteriores.
+| 2. Procesamos los sensores nuevos enviados por el ESP32.
+| 3. Conservamos las lecturas anteriores cuando el nuevo registro
+|    no las contiene.
+| 4. Permitimos campos adicionales enviados por el ESP32.
+|
+|--------------------------------------------------------------------------
+*/
+
+$sensors = [];
+
+
+/*
+|--------------------------------------------------------------------------
+| CONSERVAR SENSORES ANTERIORES
+|--------------------------------------------------------------------------
+*/
+
+if (
+    isset($this->devices[$deviceId]) &&
+    isset($this->devices[$deviceId]['sensors']) &&
+    is_array($this->devices[$deviceId]['sensors'])
+)
+{
+    $sensors =
+        $this->devices[$deviceId]['sensors'];
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| PROCESAR SENSORES RECIBIDOS
+|--------------------------------------------------------------------------
+*/
+
+if (
+    isset($data['sensors']) &&
+    is_array($data['sensors'])
+)
+{
+    foreach (
+        $data['sensors'] as $sensorData
+    )
+    {
+        if (!is_array($sensorData))
+        {
+            continue;
+        }
+
+        /*
         |--------------------------------------------------------------------------
-        | CONSERVAR SENSORES
+        | ID
         |--------------------------------------------------------------------------
         */
 
-        $sensors = [];
+        if (!isset($sensorData['id']))
+        {
+            echo "[WS] Sensor rechazado: id faltante\n";
+            continue;
+        }
+
+        $sensorId =
+            (int) $sensorData['id'];
+
+        if ($sensorId <= 0)
+        {
+            echo "[WS] Sensor rechazado: id invalido\n";
+            continue;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SENSOR ANTERIOR
+        |--------------------------------------------------------------------------
+        */
+
+        $previousSensor = [];
 
         if (
-            isset($this->devices[$deviceId]) &&
-            isset($this->devices[$deviceId]['sensors']) &&
-            is_array($this->devices[$deviceId]['sensors'])
+            isset($sensors[$sensorId]) &&
+            is_array($sensors[$sensorId])
         )
         {
-            $sensors =
-                $this->devices[$deviceId]['sensors'];
+            $previousSensor =
+                $sensors[$sensorId];
         }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | CONSERVAR DATOS ANTERIORES
+        |--------------------------------------------------------------------------
+        |
+        | Primero tomamos los datos anteriores y después sobrescribimos
+        | únicamente los campos enviados por el ESP32.
+        |
+        |--------------------------------------------------------------------------
+        */
+
+        $sensor =
+            array_merge(
+                $previousSensor,
+                $sensorData
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | NOMBRE
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            !isset($sensor['name']) ||
+            !is_string($sensor['name']) ||
+            trim($sensor['name']) === ''
+        )
+        {
+            $sensor['name'] =
+                'Sensor ' . $sensorId;
+        }
+        else
+        {
+            $sensor['name'] =
+                trim($sensor['name']);
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | TIPO
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            !isset($sensor['type']) ||
+            !is_string($sensor['type']) ||
+            trim($sensor['type']) === ''
+        )
+        {
+            $sensor['type'] =
+                'generic';
+        }
+        else
+        {
+            $sensor['type'] =
+                trim($sensor['type']);
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | GPIO
+        |--------------------------------------------------------------------------
+        */
+
+        if (isset($sensor['gpio']))
+        {
+            if ($this->isValidGpio($sensor['gpio']))
+            {
+                $sensor['gpio'] =
+                    (int) $sensor['gpio'];
+            }
+            else
+            {
+                /*
+                |--------------------------------------------------------------------------
+                | Si el GPIO nuevo es inválido, conservar el anterior
+                |--------------------------------------------------------------------------
+                */
+
+                if (isset($previousSensor['gpio']))
+                {
+                    $sensor['gpio'] =
+                        $previousSensor['gpio'];
+                }
+                else
+                {
+                    unset($sensor['gpio']);
+                }
+            }
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | SIMULATED
+        |--------------------------------------------------------------------------
+        */
+
+        if (isset($sensor['simulated']))
+        {
+            $sensor['simulated'] =
+                (bool) $sensor['simulated'];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | GUARDAR SENSOR
+        |--------------------------------------------------------------------------
+        */
+
+        $sensors[$sensorId] =
+            $sensor;
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | LOG
+        |--------------------------------------------------------------------------
+        */
+
+        echo "[WS] Sensor registrado";
+        echo " #{$sensorId}";
+
+        if (isset($sensor['name']))
+        {
+            echo " | {$sensor['name']}";
+        }
+
+        if (isset($sensor['type']))
+        {
+            echo " | tipo {$sensor['type']}";
+        }
+
+        if (isset($sensor['gpio']))
+        {
+            echo " | GPIO {$sensor['gpio']}";
+        }
+
+        echo "\n";
+    }
+}
+
 
 
         /*
@@ -619,10 +847,42 @@ class IoTWebSocketServer implements MessageComponentInterface
         }
 
         echo "[WS] Sensores: ";
-        echo count($sensors);
-        echo "\n";
+echo count($sensors);
+echo "\n";
 
-        echo "==============================================\n";
+foreach (
+    $sensors as $sensorId => $sensor
+)
+{
+    echo "[WS]   SENSOR #{$sensorId}";
+
+    if (isset($sensor['name']))
+    {
+        echo " | {$sensor['name']}";
+    }
+
+    if (isset($sensor['type']))
+    {
+        echo " | tipo {$sensor['type']}";
+    }
+
+    if (isset($sensor['gpio']))
+    {
+        echo " | GPIO {$sensor['gpio']}";
+    }
+
+    if (isset($sensor['temperature']))
+    {
+        echo " | ";
+        echo $sensor['temperature'];
+        echo " °C";
+    }
+
+    echo "\n";
+}
+
+echo "===================****===========================\n";
+
 
 
         /*
