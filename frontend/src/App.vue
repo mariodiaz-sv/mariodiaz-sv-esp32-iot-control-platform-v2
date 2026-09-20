@@ -138,6 +138,8 @@ function updateCurrentTime() {
     }
   )
 }
+/*para la fecha local*/
+
 
 /* =====================================================
    NAVIGATION
@@ -734,7 +736,18 @@ if (data.forecast) {
         '',
 
       date:
-        currentDateTime.date,
+        //currentDateTime.date,
+        new Intl.DateTimeFormat(
+    'es-SV',
+    {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: data.location.timezone ?? undefined,
+    }
+  ).format(
+    new Date()
+  ),
 
       time:
         currentDateTime.time,
@@ -2187,11 +2200,13 @@ onUnmounted(() => {
             </div>
 
           </div>
-          <!--fecha y hora-->
-          <div class="weather-datetime">
-
+          <!--fecha y hora
+          <div class="weather-datetime">-->
+              <div class="user-details">
                 <span>
-                  {{ weather.date }}
+                  {{ weather.date }}<!--fecha formato corta-->
+                
+
                 </span>
 
                 <strong>

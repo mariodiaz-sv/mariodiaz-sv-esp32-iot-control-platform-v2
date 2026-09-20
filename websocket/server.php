@@ -69,6 +69,7 @@ class IoTWebSocketServer implements MessageComponentInterface
     |--------------------------------------------------------------------------
     */
 
+
     protected function getStatus()
     {
         $status = [
@@ -302,6 +303,7 @@ class IoTWebSocketServer implements MessageComponentInterface
         }
 
         return true;
+   
     }
 
 
@@ -742,22 +744,7 @@ if (
 
 
 
-        /*
-        |--------------------------------------------------------------------------
-        | LAST SEEN ANTERIOR
-        |--------------------------------------------------------------------------
-        */
-
-        $lastSeen = time();
-
-        if (
-            isset($this->devices[$deviceId]) &&
-            isset($this->devices[$deviceId]['lastSeen'])
-        )
-        {
-            $lastSeen =
-                (int) $this->devices[$deviceId]['lastSeen'];
-        }
+     
 
 
         /*
@@ -1040,12 +1027,15 @@ echo "===================****===========================\n";
         | ACTUALIZAR ONLINE + LAST SEEN
         |--------------------------------------------------------------------------
         */
-
+/*
         $this->devices[$deviceId]['online'] = true;
         $this->devices[$deviceId]['registered'] = true;
         $this->devices[$deviceId]['connection'] = $from;
-        $this->devices[$deviceId]['lastSeen'] = time();
-
+        $this->devices[$deviceId]['lastSeen'] = time();*/
+        $this->touchDevice(
+            $deviceId,
+            $from
+        );
 
         /*
         |--------------------------------------------------------------------------
@@ -1151,12 +1141,15 @@ echo "===================****===========================\n";
         | ACTUALIZAR CONEXIÓN
         |--------------------------------------------------------------------------
         */
-
+/*
         $this->devices[$deviceId]['online'] = true;
         $this->devices[$deviceId]['registered'] = true;
         $this->devices[$deviceId]['connection'] = $from;
-        $this->devices[$deviceId]['lastSeen'] = time();
-
+        $this->devices[$deviceId]['lastSeen'] = time();*/
+        $this->touchDevice(
+            $deviceId,
+            $from
+        );
 
         /*
         |--------------------------------------------------------------------------
@@ -1267,29 +1260,51 @@ echo "===================****===========================\n";
 
 
         /*
-        |--------------------------------------------------------------------------
-        | SENSOR DENTRO DE DEVICE STATE
-        |--------------------------------------------------------------------------
-        */
+|--------------------------------------------------------------------------
+| SENSOR DENTRO DE DEVICE STATE
+|--------------------------------------------------------------------------
+*/
 
-        if (
-            isset($data['sensor']) &&
-            is_array($data['sensor'])
-        )
+if (
+    isset($data['sensor']) &&
+    is_array($data['sensor'])
+)
+{
+    $sensor = $data['sensor'];
+
+    if (isset($sensor['id']))
+    {
+        $sensorId = (int) $sensor['id'];
+
+        if ($sensorId > 0)
         {
-            $sensor = $data['sensor'];
+            $previousSensor = [];
 
-            if (isset($sensor['id']))
-            {
-                $sensorId = (int) $sensor['id'];
-
-                if ($sensorId > 0)
-                {
+            if (
+                isset(
                     $this->devices[$deviceId]
-                        ['sensors'][$sensorId] = $sensor;
-                }
+                        ['sensors'][$sensorId]
+                ) &&
+                is_array(
+                    $this->devices[$deviceId]
+                        ['sensors'][$sensorId]
+                )
+            )
+            {
+                $previousSensor =
+                    $this->devices[$deviceId]
+                        ['sensors'][$sensorId];
             }
+
+            $this->devices[$deviceId]
+                ['sensors'][$sensorId] =
+                    array_merge(
+                        $previousSensor,
+                        $sensor
+                    );
         }
+    }
+}
 
 
         /*
@@ -1396,12 +1411,15 @@ echo "===================****===========================\n";
         | ACTUALIZAR CONEXIÓN
         |--------------------------------------------------------------------------
         */
-
+/*
         $this->devices[$deviceId]['online'] = true;
         $this->devices[$deviceId]['registered'] = true;
         $this->devices[$deviceId]['connection'] = $from;
-        $this->devices[$deviceId]['lastSeen'] = time();
-
+        $this->devices[$deviceId]['lastSeen'] = time();*/
+        $this->touchDevice(
+            $deviceId,
+            $from
+        );
 
         /*
         |--------------------------------------------------------------------------
@@ -1440,10 +1458,26 @@ echo "===================****===========================\n";
         | GUARDAR SENSOR
         |--------------------------------------------------------------------------
         */
-
+/*
         $this->devices[$deviceId]
             ['sensors'][$sensorId] = $sensor;
 
+*/$previousSensor = [];
+
+if (
+    isset($this->devices[$deviceId]['sensors'][$sensorId]) &&
+    is_array($this->devices[$deviceId]['sensors'][$sensorId])
+)
+{
+    $previousSensor =
+        $this->devices[$deviceId]['sensors'][$sensorId];
+}
+
+$this->devices[$deviceId]['sensors'][$sensorId] =
+    array_merge(
+        $previousSensor,
+        $sensor
+    );
 
         /*
         |--------------------------------------------------------------------------
@@ -2003,11 +2037,12 @@ if (
         | ENVIAR AL ESP32
         |--------------------------------------------------------------------------
         */
-
+        
         $deviceConnection =
             $this->getDeviceConnection(
                 $deviceId
             );
+           
 
         if ($deviceConnection !== null)
         {
@@ -2136,7 +2171,7 @@ if (
         | VALIDAR CONEXIÓN
         |--------------------------------------------------------------------------
         */
-
+/*
         if (
             isset($this->devices[$deviceId]['connection']) &&
             $this->devices[$deviceId]['connection'] !== $from
@@ -2147,7 +2182,32 @@ if (
             return;
         }
 
+        $deviceConnection =
+    $this->getDeviceConnection(
+        $deviceId
+    );
 
+if ($deviceConnection === null)
+{
+    echo "[WS] Device #{$deviceId} no tiene conexión ESP32\n";
+    return;
+}*/
+/*
+|--------------------------------------------------------------------------
+| VALIDAR CONEXIÓN DEL ESP32
+|--------------------------------------------------------------------------
+*/
+
+$deviceConnection =
+    $this->getDeviceConnection(
+        $deviceId
+    );
+
+if ($deviceConnection === null)
+{
+    echo "[WS] Device #{$deviceId} no tiene conexión ESP32\n";
+    return;
+}
         /*
         |--------------------------------------------------------------------------
         | ONLINE
@@ -2234,36 +2294,28 @@ if (
             );
 
 
-        /*
-        |--------------------------------------------------------------------------
-        | ENVIAR AL ESP32
-        |--------------------------------------------------------------------------
-        */
+       /*
+|--------------------------------------------------------------------------
+| ENVIAR AL ESP32
+|--------------------------------------------------------------------------
+*/
 
-        $deviceConnection =
-            $this->getDeviceConnection(
-                $deviceId
-            );
+echo "[WS] TX -> ESP32: ";
+echo $jsonCommand;
+echo "\n";
 
-        if ($deviceConnection !== null)
-        {
-            echo "[WS] TX -> ESP32: ";
-            echo $jsonCommand;
-            echo "\n";
-
-            try
-            {
-                $deviceConnection->send(
-                    $jsonCommand
-                );
-            }
-            catch (\Throwable $e)
-            {
-                echo "[WS] Error enviando comando: ";
-                echo $e->getMessage();
-                echo "\n";
-            }
-        }
+try
+{
+    $deviceConnection->send(
+        $jsonCommand
+    );
+}
+catch (\Throwable $e)
+{
+    echo "[WS] Error enviando comando: ";
+    echo $e->getMessage();
+    echo "\n";
+}
 
 
         /*

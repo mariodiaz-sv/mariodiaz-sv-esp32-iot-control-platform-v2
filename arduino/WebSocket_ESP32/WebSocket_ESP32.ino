@@ -1,7 +1,11 @@
+#include <DHT.h>
+#include <DHT_U.h>
+
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <math.h>
+
 // =====================================================
 // ENTORNO
 // =====================================================
@@ -19,13 +23,10 @@
 
 #define DEVELOPMENT_MODE 1
 
-
 // =====================================================
 // WIFI
 // =====================================================
 
-//const char *ssid = "DESKTOP-8T2K0LU 2080";
-//const char *password = "14i^804X";
 const char *ssid = "CLARO_2.4GHz_4E8E03";
 const char *password = "ptn9ZRhmf+EEcpX";
 
@@ -34,9 +35,7 @@ const char *password = "ptn9ZRhmf+EEcpX";
 // =====================================================
 
 const int DEVICE_ID = 1;
-
 const char *DEVICE_NAME = "ESP32 Principal";
-
 
 // =====================================================
 // CONFIGURACION DE ACTUADORES
@@ -50,7 +49,6 @@ struct ActuatorConfig
   int gpio;
 };
 
-
 // GPIO compatibles con ESP32 DevKit V1 clasico
 ActuatorConfig actuators[] =
 {
@@ -60,15 +58,11 @@ ActuatorConfig actuators[] =
   {4, "Portón", "gate", 23}
 };
 
-
 const size_t ACTUATOR_COUNT =
   sizeof(actuators) / sizeof(actuators[0]);
 
-
-// =====================================================
 // =====================================================
 // SENSOR NTC 10K
-// =====================================================
 // =====================================================
 //
 // NTC conectado mediante divisor de tension:
@@ -335,8 +329,115 @@ void printNTCReading()
 // =====================================================
 // =====================================================
 
+// =====================================================
+// SENSOR DHT11
+// =====================================================
+//
+// El DHT11 permite medir:
+//
+// - Temperatura
+// - Humedad relativa
+//
+// Conexion:
+//
+// DHT11
+//   VCC  -> 3.3V
+//   DATA -> GPIO25
+//   GND  -> GND
+//
+// =====================================================
+
+#define DHT_PIN 25
+#define DHT_TYPE DHT11
+
+DHT dht(DHT_PIN, DHT_TYPE);
+void configureDHT11()
+{
+  Serial.println();
+  Serial.println("[DHT11] ====================================");
+  Serial.println("[DHT11] Inicializando sensor...");
+  Serial.println("[DHT11] GPIO: 25");
+  Serial.println("[DHT11] ====================================");
+
+  dht.begin();
+
+  Serial.println("[DHT11] Sensor inicializado");
+}
+// -----------------------------------------------------
+// LEER TEMPERATURA DHT11
+// -----------------------------------------------------
+
+float readDHT11Temperature()
+{
+  return 28.0;
+  /* lo pongo comentado porque no esta instalado
+  float temperature = dht.readTemperature();
+
+  if (isnan(temperature))
+  {
+    return NAN;
+  }
+
+  return temperature;*/
+}
 
 
+// -----------------------------------------------------
+// LEER HUMEDAD DHT11
+// -----------------------------------------------------
+
+float readDHT11Humidity()
+{
+   return 65.0;
+  /* lo pongo comentado porque no esta instalado
+  float humidity = dht.readHumidity();
+
+  if (isnan(humidity))
+  {
+    return NAN;
+  }
+
+  return humidity;
+  */
+}
+// -----------------------------------------------------
+// MOSTRAR LECTURA DHT11 POR SERIAL
+// -----------------------------------------------------
+
+void printDHT11Reading()
+{
+  float temperature =
+    readDHT11Temperature();
+
+  float humidity =
+    readDHT11Humidity();
+
+
+  Serial.print("[DHT11] Temperatura: ");
+
+  if (isnan(temperature))
+  {
+    Serial.print("ERROR");
+  }
+  else
+  {
+    Serial.print(temperature, 2);
+    Serial.print(" C");
+  }
+
+
+  Serial.print(" | Humedad: ");
+
+  if (isnan(humidity))
+  {
+    Serial.println("ERROR");
+  }
+  else
+  {
+    Serial.print(humidity, 2);
+    Serial.println(" %");
+  }
+}
 
 // =====================================================
 // INTERVALO SENSOR / ESTADO
@@ -1079,12 +1180,6 @@ bool connectWebSocket()
   );
 
 #endif
-//prueba
-Serial.print("[TEST] TCP hacia ");
-Serial.print(websocketHost);
-Serial.print(":");
-Serial.println(websocketPort);
-//prueba
 
   if (
     !client.connect(
@@ -1390,6 +1485,32 @@ void sendRegistration()
   ntc["simulated"] =
     false;
 
+  // ===================================================
+  // SENSOR DHT11
+  // ===================================================
+
+  JsonObject dht11 =
+    sensorArray.add<JsonObject>();
+
+
+  dht11["id"] =
+    2;
+
+
+  dht11["name"] =
+    "Sala: DHT11";
+
+
+  dht11["type"] =
+    "dht11";
+
+
+  dht11["gpio"] =
+    DHT_PIN;
+
+
+  dht11["simulated"] =
+    false;
 
 
   // ===================================================
@@ -1606,46 +1727,7 @@ void sendDeviceStatus()
   // SENSOR NTC 10K
   // ===================================================
 
-  float temperature =
-    readNTCTemperature();
-
-
-  JsonObject sensor =
-    doc["sensor"].to<JsonObject>();
-
-
-  sensor["id"] =
-    1;
-
-
-  sensor["name"] =
-    "Sala: Temperatura";
-
-
-  sensor["type"] =
-    "temperature";
-
-
-  sensor["gpio"] =
-    NTC_PIN;
-
-
-  sensor["simulated"] =
-    false;
-
-
-  if (
-    !isnan(temperature)
-  )
-  {
-    sensor["temperature"] =
-      temperature;
-  }
-
-
-
-
-  // ===================================================
+    // ===================================================
   // SERIALIZAR
   // ===================================================
 
@@ -1708,7 +1790,7 @@ void sendSensorStatus()
 
 
   // ===================================================
-  // CREAR JSON
+  // CREAR JSON ntc
   // ===================================================
 
   JsonDocument doc;
@@ -1756,7 +1838,7 @@ void sendSensorStatus()
 
 
   // ===================================================
-  // SERIALIZAR
+  // SERIALIZAR NTC
   // ===================================================
 
   String message;
@@ -1786,6 +1868,112 @@ void sendSensorStatus()
   {
     Serial.println(
       "[SENSOR] Error enviando sensor"
+    );
+  }
+   // ===================================================
+  // LEER DHT11
+  // ===================================================
+
+  float dhtTemperature =
+    readDHT11Temperature();
+
+
+  float dhtHumidity =
+    readDHT11Humidity();
+
+
+  // Mostrar tambien por Serial
+  printDHT11Reading();
+
+
+  // ===================================================
+  // CREAR JSON DHT11
+  // ===================================================
+
+  JsonDocument dhtDoc;
+
+
+  dhtDoc["type"] =
+    "sensor_state";
+
+
+  dhtDoc["device_id"] =
+    DEVICE_ID;
+
+
+  JsonObject dht =
+    dhtDoc["sensor"].to<JsonObject>();
+
+
+  dht["id"] =
+    2;
+
+
+  dht["name"] =
+    "Sala: DHT11";
+
+
+  dht["type"] =
+    "dht11";
+
+
+  dht["gpio"] =
+    DHT_PIN;
+
+
+  dht["simulated"] =
+    false;
+
+
+  if (
+    !isnan(dhtTemperature)
+  )
+  {
+    dht["temperature"] =
+      dhtTemperature;
+  }
+
+
+  if (
+    !isnan(dhtHumidity)
+  )
+  {
+    dht["humidity"] =
+      dhtHumidity;
+  }
+
+
+  // ===================================================
+  // SERIALIZAR DHT11
+  // ===================================================
+
+  String dhtMessage;
+
+
+  serializeJson(
+    dhtDoc,
+    dhtMessage
+  );
+
+
+  Serial.print(
+    "[SENSOR] *** DHT11 *** TX: "
+  );
+
+
+  Serial.println(
+    dhtMessage
+  );
+
+
+  if (
+    !sendWebSocketText(
+      dhtMessage
+    )
+  )
+  {
+    Serial.println(
+      "[SENSOR] Error enviando DHT11"
     );
   }
 }
@@ -3152,7 +3340,6 @@ void processWebSocket()
       return;
     }
 
-
     // =================================================
     // PROCESAR
     // =================================================
@@ -3327,7 +3514,7 @@ void setup()
   );
 
   Serial.println(
-    "WebSocket: ws://192.168.188.15:8080"
+    "WebSocket: ws://192.168.1.40:8080"
   );
 
 #else
@@ -3380,7 +3567,8 @@ void setup()
 
   configureNTC();
 
-
+  //INICIAR DHT11
+  configureDHT11();
   // ===================================================
   // WIFI
   // ===================================================
