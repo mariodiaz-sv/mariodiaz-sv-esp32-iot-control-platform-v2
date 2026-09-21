@@ -3442,6 +3442,54 @@ input[type="checkbox"]:checked {
   color: #ef4444;
   white-space: nowrap;
 }
+.humidity-value {
+  margin-top: 6px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  .temperature-value {
+    font-size: 1.2rem;
+  }
+
+  .sensor-values {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .temperature-control {
+    min-height: 100px;
+    height: auto;
+    padding-bottom: 12px;
+  }
+
+  .temperature-control .led-info {
+    min-width: 0;
+  }
+
+  .temperature-control .led-info > div:last-child {
+    min-width: 0;
+  }
+
+  .temperature-control .temperature-value,
+  .temperature-control .sensor-values {
+    position: static;
+  }
+
+  .temperature-control .sensor-values {
+    margin-top: 8px;
+  }
+
+  .temperature-control .temperature-value {
+    white-space: nowrap;
+  }
+}
+
+}
 /*hasta aqui todo bien*/
 /* =====================================================
    DASHBOARD - ANCHO COMPLETO
@@ -4298,4 +4346,26 @@ input[type="checkbox"]:checked {
     align-items: flex-start;
     text-align: left;
   }
+/*para que el texto no se salga de estado general*/
+@media (max-width: 600px) {
+
+  .overview-body {
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+.overview-header {
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+  .health-details {
+    width: 100%;
+  }
+
+}
+
+
+
+
 }

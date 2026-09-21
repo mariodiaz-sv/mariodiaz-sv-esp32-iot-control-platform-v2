@@ -508,6 +508,8 @@ unsigned long lastHeartbeat = 0;
 
 unsigned long lastPong = 0;
 
+unsigned long lastHeartbeatAck = 0;
+
 const unsigned long HEARTBEAT_INTERVAL = 15000;
 
 // IMPORTANTE:
@@ -1350,23 +1352,27 @@ bool connectWebSocket()
     true;
 
 
-  // ===================================================
-  // INICIALIZAR HEARTBEAT
-  // ===================================================
+// ===================================================
+// INICIALIZAR HEARTBEAT
+// ===================================================
 
-  unsigned long now =
+unsigned long now =
     millis();
 
-  lastHeartbeat =
+lastHeartbeat =
     now;
 
-  lastPong =
+lastPong =
+    now;
+
+lastHeartbeatAck =
     now;
 
 
-  Serial.println(
-    "[WS] WEBSOCKET CONECTADO"
-  );
+Serial.println(
+  "[WS] WEBSOCKET CONECTADO"
+);
+
 
 
   // ===================================================
@@ -2516,24 +2522,28 @@ void processCommand(
   }
 
 
-  // ===================================================
-  // HEARTBEAT ACK
-  // ===================================================
+// ===================================================
+// HEARTBEAT ACK
+// ===================================================
 
-  if (
-    type &&
-    strcmp(
-      type,
-      "heartbeat_ack"
-    ) == 0
-  )
-  {
-    Serial.println(
-      "[HEARTBEAT] ACK recibido del servidor"
-    );
+if (
+  type &&
+  strcmp(
+    type,
+    "heartbeat_ack"
+  ) == 0
+)
+{
+  lastHeartbeatAck =
+    millis();
 
-    return;
-  }
+  Serial.println(
+    "[HEARTBEAT] ACK recibido del servidor"
+  );
+
+  return;
+}
+
 
 
   // ===================================================
@@ -3877,9 +3887,10 @@ if (
 // ===================================================
 
   if (
-    millis() - lastPong >=
-    PONG_TIMEOUT
-  )
+  millis() - lastPong >= PONG_TIMEOUT &&
+  millis() - lastHeartbeatAck >= PONG_TIMEOUT
+)
+
   {
     Serial.println();
 

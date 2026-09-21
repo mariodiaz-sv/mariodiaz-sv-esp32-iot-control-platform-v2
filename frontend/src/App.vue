@@ -33,6 +33,7 @@ interface Sensor {
   gpio: number
   simulated?: boolean
   temperature?: number
+  humidity?: number
 }
 
 interface Device {
@@ -54,6 +55,7 @@ interface WebSocketSensor {
   gpio: number
   simulated?: boolean
   temperature?: number
+  humidity?: number
 }
 //fin sensor
 
@@ -1278,6 +1280,11 @@ const sensors =
             sensor.temperature !== undefined
               ? Number(sensor.temperature)
               : undefined,
+
+          humidity:
+            sensor.humidity !== undefined
+              ? Number(sensor.humidity)
+              : undefined,
         })
       )
     : []
@@ -1569,7 +1576,28 @@ function connectWebSocket() {
     console.log(
       '[WS] ✓ Conectado correctamente'
     )
-  }
+  /*
+  |--------------------------------------------------------------------------
+  | REGISTRO DE VUE
+  |--------------------------------------------------------------------------
+  |
+  | Identificamos esta conexión ante el servidor WebSocket.
+  |
+  |--------------------------------------------------------------------------
+  */
+
+  socket.send(
+    JSON.stringify({
+      type: 'register_client',
+      client_type: 'vue',
+      name: 'Vue Dashboard'
+    })
+  )
+
+  console.log(
+    '[WS] ✓ Cliente Vue registrado'
+  )
+}
 
   socket.onmessage = event => {
     try {
@@ -1611,10 +1639,10 @@ function connectWebSocket() {
        */
       if (
         data.type ===
-        'registration'
+        'client_registration'
       ) {
         console.log(
-          '[WS] Confirmación de registro:',
+          '[WS] ✓ Confirmación de registro:',
           data
         )
 
@@ -3200,15 +3228,26 @@ onUnmounted(() => {
 
               </div>
 
-              <div class="temperature-value">
+              <div class="sensor-values">
 
-                {{
-                  sensor.temperature !== undefined
-                    ? sensor.temperature.toFixed(1)
-                    : '--'
-                }}°C
+                <div class="temperature-value">
+                  {{
+                    sensor.temperature !== undefined
+                      ? sensor.temperature.toFixed(1)
+                      : '--'
+                  }}°C
+                </div>
+
+                <div
+                  v-if="sensor.humidity !== undefined"
+                  class="humidity-value"
+                >
+                  💧 {{ sensor.humidity.toFixed(1) }}%
+                </div>
 
               </div>
+
+
 
             </div>
 
@@ -3940,19 +3979,17 @@ onUnmounted(() => {
         </div>
 
       </div>
-
-      <div class="temperature-value">
-        {{
-          sensor.temperature !== undefined
-            ? sensor.temperature.toFixed(1)
-            : '--'
-        }}°C
-      </div>
-
+      <div class="sensor-values">
+        <div class="temperature-value">
+          {{
+            sensor.temperature !== undefined
+              ? sensor.temperature.toFixed(1)
+              : '--'
+          }}°C
+        </div>
+      </div>  
     </div>
-
   </div>
-
 </div>
 
 
