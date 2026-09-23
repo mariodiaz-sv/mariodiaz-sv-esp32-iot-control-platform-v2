@@ -17,72 +17,19 @@ import {
 import DeviceCard from './components/DeviceCard.vue'
 import WeatherPanel from './components/WeatherPanel.vue'
 import WeatherSettingsModal from './components/WeatherSettingsModal.vue'
+import { useWebSocket } from './composables/useWebSocket'
 
-type DeviceStatus = 'online' | 'offline'
+import {
+  useDevices,
+} from './composables/useDevices'
 
-interface Actuator {
-  id: number
-  name: string
-  type: string
-  gpio: number
-  state: boolean
-}
-
-interface Sensor {
-  id: number
-  name: string
-  type: string
-  gpio: number
-  simulated?: boolean
-  temperature?: number
-  humidity?: number
-}
-
-interface Device {
-  id: number
-  name: string
-  type: string
-  location: string
-  status: DeviceStatus
-  registered: boolean
-  actuators: Actuator[]
-  sensors: Sensor[]
-}
+import type {
+  WebSocketStatusMessage,
+} from './composables/useDevices'
 
 
-//sensor
-interface WebSocketSensor {
-  id: number
-  name: string
-  type: string
-  gpio: number
-  simulated?: boolean
-  temperature?: number
-  humidity?: number
-}
-//fin sensor
 
-interface WebSocketActuator {
-  id: number
-  name: string
-  type: string
-  gpio: number
-  state: 'ON' | 'OFF' | boolean
-}
 
-interface WebSocketDevice {
-  id: number
-  name: string
-  registered?: boolean
-  online?: boolean
-  actuators?: WebSocketActuator[]
-  sensors?: WebSocketSensor[]
-}
-
-interface WebSocketStatusMessage {
-  type: 'status'
-  devices: WebSocketDevice[]
-}
 interface WeatherForecast {
   time: string
   temperature: number
@@ -837,200 +784,104 @@ const isDark = ref(
 
 const apiOnline = ref(false)
 const apiVersion = ref('')
-const wsConnected = ref(false)
-const ws = ref<WebSocket | null>(null)
 
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let componentUnmounted = false
+/* =====================================================
+   WEBSOCKET
+===================================================== */
+
+const {
+  wsConnected,
+  connectWebSocket,
+  send,
+} = useWebSocket({
+  onMessage(data) {
+    /*
+     * STATUS
+     */
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'type' in data &&
+      data.type === 'status'
+    ) {
+      const statusMessage =
+        data as WebSocketStatusMessage
+
+      if (
+        Array.isArray(
+          statusMessage.devices
+        )
+      ) {
+        updateDevicesFromServer(
+          statusMessage.devices
+        )
+      }
+
+      return
+    }
+
+    /*
+     * REGISTRATION
+     */
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'type' in data &&
+      data.type ===
+        'client_registration'
+    ) {
+      console.log(
+        '[WS] ✓ Confirmación de registro:',
+        data
+      )
+
+      return
+    }
+
+    /*
+     * COMMAND
+     */
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'type' in data &&
+      data.type === 'command'
+    ) {
+      console.log(
+        '[WS] Comando recibido:',
+        data
+      )
+
+      return
+    }
+  },
+})
 
 /* =====================================================
    DEVICES
 ===================================================== */
 
-const devices = ref<Device[]>([])
-/* =====================================================
-   HISTORIAL DE TEMPERATURA
-   Guarda temporalmente las últimas 30 lecturas
-   recibidas desde el WebSocket.
-===================================================== */
+const {
+  devices,
 
-interface TemperaturePoint {
-  time: string
-  temperature: number
-}
+  totalSensors,
+  onlineDevices,
+  offlineDevices,
 
-const temperatureHistory = ref<
-  Record<number, TemperaturePoint[]>
->({})
+  totalActuators,
+  activeActuators,
 
-const MAX_TEMPERATURE_POINTS = 30
+  availability,
 
-const totalSensors = computed(() =>
-  devices.value.reduce(
-    (total, device) =>
-      total + device.sensors.length,
-    0
-  )
-)
-/* NORMALIZAR TEMPERATURA */
-/* =====================================================
-   TEMPERATURA - DATOS PARA LA TARJETA Y GRÁFICO
-===================================================== */
+  updateDevicesFromServer,
 
+  isActuatorChanging,
 
+  toggleActuator,
 
+  actuatorButtonLabel,
+} = useDevices(send)
 
-/* =====================================================
-   ACTUATOR PENDING
-===================================================== */
-
-const pendingActuatorCommands = ref<Record<string, boolean>>({})
-
-const pendingTimers = new Map<
-  string,
-  ReturnType<typeof setTimeout>
->()
-
-function getActuatorKey(
-  deviceId: number,
-  actuatorId: number
-) {
-  return `${deviceId}-${actuatorId}`
-}
-
-function isActuatorChanging(
-  deviceId: number,
-  actuatorId: number
-) {
-  const key = getActuatorKey(deviceId, actuatorId)
-
-  return Object.prototype.hasOwnProperty.call(
-    pendingActuatorCommands.value,
-    key
-  )
-}
-
-function clearActuatorPending(
-  deviceId: number,
-  actuatorId: number
-) {
-  const key = getActuatorKey(deviceId, actuatorId)
-
-  const next = {
-    ...pendingActuatorCommands.value,
-  }
-
-  delete next[key]
-
-  pendingActuatorCommands.value = next
-
-  const timer = pendingTimers.get(key)
-
-  if (timer) {
-    clearTimeout(timer)
-    pendingTimers.delete(key)
-  }
-}
-
-function setActuatorPending(
-  device: Device,
-  actuator: Actuator,
-  expectedState: boolean
-) {
-  const key = getActuatorKey(
-    device.id,
-    actuator.id
-  )
-
-  pendingActuatorCommands.value = {
-    ...pendingActuatorCommands.value,
-    [key]: expectedState,
-  }
-
-  const existingTimer = pendingTimers.get(key)
-
-  if (existingTimer) {
-    clearTimeout(existingTimer)
-  }
-
-  const timer = setTimeout(() => {
-    const pending =
-      pendingActuatorCommands.value[key]
-
-    if (pending !== undefined) {
-      console.warn(
-        '[ACTUATOR] Timeout esperando confirmación:',
-        {
-          device_id: device.id,
-          actuator_id: actuator.id,
-          expected_state: expectedState,
-        }
-      )
-
-      clearActuatorPending(
-        device.id,
-        actuator.id
-      )
-    }
-  }, 8000)
-
-  pendingTimers.set(key, timer)
-}
-
-/* =====================================================
-   COMPUTED
-===================================================== */
-
-const onlineDevices = computed(() =>
-  devices.value.filter(
-    device => device.status === 'online'
-  ).length
-)
-
-const offlineDevices = computed(() =>
-  devices.value.filter(
-    device => device.status === 'offline'
-  ).length
-)
-
-const totalActuators = computed(() =>
-  devices.value.reduce(
-    (total, device) =>
-      total + device.actuators.length,
-    0
-  )
-)
-
-const activeActuators = computed(() =>
-  devices.value.reduce(
-    (total, device) =>
-      total +
-      device.actuators.filter(
-        actuator => actuator.state
-      ).length,
-    0
-  )
-)
-
-/*const totalLeds = computed(() =>
-  totalActuators.value
-)
-
-const activeLeds = computed(() =>
-  activeActuators.value
-)*/
-
-const availability = computed(() => {
-  if (!devices.value.length) {
-    return 0
-  }
-
-  return Math.round(
-    (onlineDevices.value /
-      devices.value.length) *
-      100
-  )
-})
 
 /* =====================================================
    DASHBOARD PREFERENCES
@@ -1105,8 +956,9 @@ function saveDashboardPreferences() {
   )
 }
 
-
-//fin buscar por ciudad
+/* =====================================================
+   WEATHER SETTINGS UI
+===================================================== */
 
 async function openWeatherSettings() {
   settingsMessage.value = ''
@@ -1128,7 +980,6 @@ function closeWeatherSettings() {
 
   weatherSettingsOpen.value = false
 }
-
 
 function toggleDashboardPanel(
   panel: DashboardPanel
@@ -1229,631 +1080,11 @@ async function checkApi() {
 }
 
 /* =====================================================
-   WEBSOCKET MAPPING
-===================================================== */
-
-function normalizeActuatorState(
-  state: WebSocketActuator['state']
-): boolean {
-  if (typeof state === 'boolean') {
-    return state
-  }
-
-  return state.toUpperCase() === 'ON'
-}
-
-function mapWebSocketActuator(
-  wsActuator: WebSocketActuator
-): Actuator {
-  return {
-    id: Number(wsActuator.id),
-
-    name: wsActuator.name,
-
-    type: wsActuator.type,
-
-    gpio: Number(wsActuator.gpio),
-
-    state: normalizeActuatorState(
-      wsActuator.state
-    ),
-  }
-}
-
-function mapWebSocketDevice(
-  wsDevice: WebSocketDevice
-): Device {
-  const actuators =
-    Array.isArray(wsDevice.actuators)
-      ? wsDevice.actuators.map(
-          mapWebSocketActuator
-        )
-      : []
-const sensors =
-  Array.isArray(wsDevice.sensors)
-    ? wsDevice.sensors.map(
-        (sensor): Sensor => ({
-          id: Number(sensor.id),
-          name: sensor.name,
-          type: sensor.type,
-          gpio: Number(sensor.gpio),
-          simulated: sensor.simulated ?? false,
-          temperature:
-            sensor.temperature !== undefined
-              ? Number(sensor.temperature)
-              : undefined,
-
-          humidity:
-            sensor.humidity !== undefined
-              ? Number(sensor.humidity)
-              : undefined,
-        })
-      )
-    : []
-  return {
-    id: Number(wsDevice.id),
-
-    name: wsDevice.name,
-
-    type: 'ESP32',
-
-    location: 'Sin ubicación',
-
-    registered:
-      wsDevice.registered ?? true,
-
-    status:
-      wsDevice.online === false
-        ? 'offline'
-        : 'online',
-
-    actuators,
-    sensors,
-  }
-}
-
-/* =====================================================
-   ACTUATOR CONFIRMATIONS
-===================================================== */
-
-function processActuatorConfirmations(
-  serverDevices: WebSocketDevice[]
-) {
-  for (const serverDevice of serverDevices) {
-    if (
-      !Array.isArray(
-        serverDevice.actuators
-      )
-    ) {
-      continue
-    }
-
-    for (
-      const serverActuator of
-        serverDevice.actuators
-    ) {
-      const deviceId =
-        Number(serverDevice.id)
-
-      const actuatorId =
-        Number(serverActuator.id)
-
-      const key =
-        getActuatorKey(
-          deviceId,
-          actuatorId
-        )
-
-      const pending =
-        pendingActuatorCommands.value[key]
-
-      if (pending === undefined) {
-        continue
-      }
-
-      const receivedState =
-        normalizeActuatorState(
-          serverActuator.state
-        )
-
-      console.log(
-        '[ACTUATOR] Confirmación STATUS:',
-        {
-          deviceId,
-          actuatorId,
-          expected: pending,
-          received: receivedState,
-        }
-      )
-
-      /*
-       * CONFIRMACIÓN CORRECTA
-       *
-       * El servidor confirmó exactamente
-       * el estado que solicitamos.
-       */
-      if (receivedState === pending) {
-        console.log(
-          '[ACTUATOR] ✓ Confirmado:',
-          {
-            deviceId,
-            actuatorId,
-            state: receivedState,
-          }
-        )
-
-        clearActuatorPending(
-          deviceId,
-          actuatorId
-        )
-
-        continue
-      }
-
-      /*
-       * IMPORTANTE:
-       *
-       * Si recibimos un estado diferente,
-       * NO quitamos CAMBIANDO...
-       *
-       * Esto significa que el ESP32/servidor
-       * todavía no ejecutó correctamente
-       * el comando.
-       */
-      console.warn(
-        '[ACTUATOR] ✗ Estado no confirmado:',
-        {
-          deviceId,
-          actuatorId,
-          expected: pending,
-          received: receivedState,
-        }
-      )
-    }
-  }
-}
-
-/* =====================================================
-   UPDATE DEVICES
-===================================================== */
-
-function updateDevicesFromServer(
-  serverDevices: WebSocketDevice[]
-) {
-  processActuatorConfirmations(
-    serverDevices
-  )
-
-  devices.value =
-    serverDevices.map(
-      mapWebSocketDevice
-    )
-  /* =====================================================
-     REGISTRAR HISTORIAL DE TEMPERATURA
-     Guarda cada lectura recibida desde el WebSocket.
-  ===================================================== */
-
-  for (const device of serverDevices) {
-    if (!Array.isArray(device.sensors)) {
-      continue
-    }
-
-    const temperatureSensor = device.sensors.find(
-      sensor =>
-        sensor.type === 'temperature' &&
-        sensor.temperature !== undefined
-    )
-
-    if (!temperatureSensor) {
-      continue
-    }
-
-    const temperature = Number(
-      temperatureSensor.temperature
-    )
-
-    if (!Number.isFinite(temperature)) {
-      continue
-    }
-
-    const deviceId = Number(device.id)
-
-    if (!temperatureHistory.value[deviceId]) {
-      temperatureHistory.value[deviceId] = []
-    }
-
-    temperatureHistory.value[deviceId].push({
-      time: new Date().toLocaleTimeString(
-        'es-SV',
-        {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }
-      ),
-      temperature,
-    })
-
-    if (
-      temperatureHistory.value[deviceId].length >
-      MAX_TEMPERATURE_POINTS
-    ) {
-      temperatureHistory.value[deviceId] =
-        temperatureHistory.value[deviceId].slice(
-          -MAX_TEMPERATURE_POINTS
-        )
-    }
-  }
-
-  /*
-   * Si un dispositivo está offline,
-   * cancelamos sus comandos pendientes.
-   */
-  for (
-    const device of devices.value
-  ) {
-    if (
-      device.status !==
-      'offline'
-    ) {
-      continue
-    }
-
-    for (
-      const actuator of
-        device.actuators
-    ) {
-      clearActuatorPending(
-        device.id,
-        actuator.id
-      )
-    }
-  }
-}
-
-/* =====================================================
-   WEBSOCKET CONNECTION
-===================================================== */
-
-function scheduleReconnect() {
-  if (componentUnmounted) {
-    return
-  }
-
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-  }
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-
-    if (
-      !componentUnmounted &&
-      !wsConnected.value
-    ) {
-      connectWebSocket()
-    }
-  }, 3000)
-}
-
-function connectWebSocket() {
-  if (componentUnmounted) {
-    return
-  }
-
-  if (
-    ws.value &&
-    (
-      ws.value.readyState ===
-        WebSocket.OPEN ||
-      ws.value.readyState ===
-        WebSocket.CONNECTING
-    )
-  ) {
-    return
-  }
-
-  console.log(
-    '[WS] Conectando...'
-  )
-
-  const WS_URL =
-  import.meta.env.VITE_WS_URL ||
-  'ws://127.0.0.1:8080'
-
-  const socket =
-  new WebSocket(WS_URL)
-
-
-  ws.value = socket
-
-  socket.onopen = () => {
-    if (componentUnmounted) {
-      socket.close()
-      return
-    }
-
-    wsConnected.value = true
-
-    console.log(
-      '[WS] ✓ Conectado correctamente'
-    )
-  /*
-  |--------------------------------------------------------------------------
-  | REGISTRO DE VUE
-  |--------------------------------------------------------------------------
-  |
-  | Identificamos esta conexión ante el servidor WebSocket.
-  |
-  |--------------------------------------------------------------------------
-  */
-
-  socket.send(
-    JSON.stringify({
-      type: 'register_client',
-      client_type: 'vue',
-      name: 'Vue Dashboard'
-    })
-  )
-
-  console.log(
-    '[WS] ✓ Cliente Vue registrado'
-  )
-}
-
-  socket.onmessage = event => {
-    try {
-      const data =
-        JSON.parse(
-          event.data
-        )
-
-      console.log(
-        '[WS] RX <- SERVER:',
-        data
-      )
-
-      /*
-       * STATUS
-       */
-      if (
-        data.type ===
-        'status'
-      ) {
-        const statusMessage =
-          data as WebSocketStatusMessage
-
-        if (
-          Array.isArray(
-            statusMessage.devices
-          )
-        ) {
-          updateDevicesFromServer(
-            statusMessage.devices
-          )
-        }
-
-        return
-      }
-
-      /*
-       * REGISTRATION
-       */
-      if (
-        data.type ===
-        'client_registration'
-      ) {
-        console.log(
-          '[WS] ✓ Confirmación de registro:',
-          data
-        )
-
-        return
-      }
-
-      /*
-       * COMMAND
-       */
-      if (
-        data.type ===
-        'command'
-      ) {
-        console.log(
-          '[WS] Comando recibido:',
-          data
-        )
-
-        return
-      }
-    } catch (error) {
-      console.error(
-        '[WS] Error procesando mensaje:',
-        error
-      )
-    }
-  }
-
-  socket.onerror = error => {
-    wsConnected.value = false
-
-    console.error(
-      '[WS] Error:',
-      error
-    )
-  }
-
-  socket.onclose = () => {
-    wsConnected.value = false
-
-    console.log(
-      '[WS] Conexión cerrada'
-    )
-
-    if (
-      ws.value === socket
-    ) {
-      ws.value = null
-    }
-
-    scheduleReconnect()
-  }
-}
-
-/* =====================================================
-   ACTUATOR CONTROL
-===================================================== */
-
-function toggleActuator(
-  device: Device,
-  actuator: Actuator
-) {
-  /*
-   * Dispositivo offline.
-   */
-  if (
-    device.status !==
-    'online'
-  ) {
-    console.warn(
-      '[ACTUATOR] Dispositivo offline:',
-      device.id
-    )
-
-    return
-  }
-
-  /*
-   * Ya existe un comando pendiente.
-   */
-  if (
-    isActuatorChanging(
-      device.id,
-      actuator.id
-    )
-  ) {
-    console.warn(
-      '[ACTUATOR] Comando ya pendiente:',
-      {
-        device_id: device.id,
-        actuator_id: actuator.id,
-      }
-    )
-
-    return
-  }
-
-  /*
-   * WebSocket desconectado.
-   */
-  if (
-    !ws.value ||
-    ws.value.readyState !==
-      WebSocket.OPEN
-  ) {
-    console.warn(
-      '[WS] WebSocket no está conectado'
-    )
-
-    return
-  }
-
-  /*
-   * Estado que esperamos recibir
-   * posteriormente en STATUS.
-   */
-  const expectedState =
-    !actuator.state
-
-  /*
-   * Protocolo actual.
-   */
-  const message = {
-    command:
-      'actuator_toggle',
-
-    device_id:
-      Number(device.id),
-
-    actuator_id:
-      Number(actuator.id),
-  }
-
-  /*
-   * Primero marcamos el comando
-   * como pendiente.
-   */
-  setActuatorPending(
-    device,
-    actuator,
-    expectedState
-  )
-
-  try {
-    ws.value.send(
-      JSON.stringify(message)
-    )
-
-    console.log(
-      '[WS] TX -> SERVER:',
-      message
-    )
-
-    console.log(
-      '[ACTUATOR] Esperando STATUS:',
-      {
-        device_id: device.id,
-        actuator_id: actuator.id,
-        expected_state:
-          expectedState,
-      }
-    )
-  } catch (error) {
-    console.error(
-      '[WS] Error enviando comando:',
-      error
-    )
-
-    clearActuatorPending(
-      device.id,
-      actuator.id
-    )
-  }
-}
-
-/* =====================================================
-   HELPERS
-===================================================== */
-
-function deviceIsOffline(
-  device: Device
-) {
-  return (
-    device.status ===
-    'offline'
-  )
-}
-
-function actuatorButtonLabel(
-  device: Device,
-  actuator: Actuator
-) {
-  if (deviceIsOffline(device)) {
-    return 'BLOQUEADO'
-  }
-
-  return actuator.state
-    ? 'ON'
-    : 'OFF'
-}
-
-
-/* =====================================================
    LIFECYCLE
 ===================================================== */
 
-onMounted(async () => {
-  componentUnmounted = false
 
+onMounted(async () => {
   applyTheme()
   checkApi()
 
@@ -1872,37 +1103,15 @@ onMounted(async () => {
 
 
 onUnmounted(() => {
-  componentUnmounted = true
-
   if (currentTimeTimer) {
-  clearInterval(currentTimeTimer)
-  currentTimeTimer = null
-}
-
-  if (reconnectTimer) {
-    clearTimeout(
-      reconnectTimer
+    clearInterval(
+      currentTimeTimer
     )
 
-    reconnectTimer = null
+    currentTimeTimer = null
   }
-
-  if (ws.value) {
-    ws.value.close()
-    ws.value = null
-  }
-
-  wsConnected.value = false
-
-  for (
-    const timer of
-      pendingTimers.values()
-  ) {
-    clearTimeout(timer)
-  }
-
-  pendingTimers.clear()
 })
+
 </script>
 
 

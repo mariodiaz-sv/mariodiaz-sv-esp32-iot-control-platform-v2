@@ -1,3 +1,37 @@
+/**
+
+api.ts
+
+Capa de comunicación HTTP entre el frontend Vue y la API
+
+REST del backend Laravel.
+
+Centraliza:
+
+La URL base de la API mediante variables de entorno.
+
+Las peticiones HTTP mediante apiRequest().
+
+La comprobación del estado y versión del backend.
+
+La obtención de los datos meteorológicos.
+
+La consulta de la ubicación configurada para el clima.
+
+La actualización de la ubicación meteorológica.
+
+También define las interfaces TypeScript utilizadas para
+
+representar las respuestas de la API y mantener tipado
+
+consistente entre el backend y el frontend.
+
+Este archivo no contiene lógica de interfaz ni de WebSocket.
+
+Su responsabilidad es realizar las peticiones HTTP y devolver
+
+los datos al resto de la aplicación.
+*/
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   'http://127.0.0.1:8000/api'

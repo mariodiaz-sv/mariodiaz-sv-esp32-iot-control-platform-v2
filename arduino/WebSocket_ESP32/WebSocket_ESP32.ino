@@ -199,6 +199,8 @@ float readNTCTemperature()
 
 
   return (float)temperatureCelsius;
+  
+  /*return 25.0; para mandar temp falsa*/
 }
 
 
@@ -295,6 +297,7 @@ void printNTCReading()
 
   Serial.print(
     rawADC
+    
   );
 
 
