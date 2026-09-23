@@ -228,13 +228,16 @@ function toggleActuator(
 
             <div class="temperature-value">
 
-              {{
-                sensor.temperature !== undefined
-                  ? sensor.temperature.toFixed(1)
-                  : '--'
-              }}°C
+                {{
+                  device.status === 'offline'
+                    ? 'Sin conexión'
+                    : sensor.temperature !== undefined
+                      ? `${sensor.temperature.toFixed(1)}°C`
+                      : '--'
+                }}
 
-            </div>
+              </div>
+
 
             <div
               v-if="
@@ -243,8 +246,13 @@ function toggleActuator(
               class="humidity-value"
             >
               💧
-              {{ sensor.humidity.toFixed(1) }}%
+              {{
+                device.status === 'offline'
+                  ? 'Sin conexión'
+                  : `${sensor.humidity.toFixed(1)}%`
+              }}
             </div>
+
 
           </div>
 

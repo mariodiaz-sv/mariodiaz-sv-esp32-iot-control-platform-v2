@@ -2208,20 +2208,8 @@ onUnmounted(() => {
 
           </section>
 
-      
-<!-- =====================================================
-     DISPOSITIVOS + CLIMA
-===================================================== -->
-<!-- =====================================================
-     DISPOSITIVOS + CLIMA
-===================================================== -->
-
 
 <div class="dashboard-two-columns">
-
-
-
-
 
   <!-- =================================================
        COLUMNA IZQUIERDA: DISPOSITIVOS
@@ -2231,10 +2219,6 @@ onUnmounted(() => {
   v-if="dashboardPreferences.devices"
   class="devices-section dashboard-panel"
 >
-
-
-
-
 
     <div class="section-heading">
 
